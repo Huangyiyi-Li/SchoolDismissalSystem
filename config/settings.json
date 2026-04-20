@@ -1,0 +1,157 @@
+{
+    "udp_port": 39169,
+    "time_window_start": "10:30",
+    "time_window_end": "18:30",
+    "broadcast_count": 3,
+    "deduplication_interval_seconds": 300,
+    "school_id": "40125",
+    "schedules": [
+        {
+            "weekday": 1,
+            "timeRanges": [
+                {
+                    "startTime": "08:30",
+                    "endTime": "18:30"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                }
+            ]
+        },
+        {
+            "weekday": 2,
+            "timeRanges": [
+                {
+                    "startTime": "08:30",
+                    "endTime": "18:30"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                }
+            ]
+        },
+        {
+            "weekday": 3,
+            "timeRanges": [
+                {
+                    "startTime": "08:30",
+                    "endTime": "18:30"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                }
+            ]
+        },
+        {
+            "weekday": 4,
+            "timeRanges": [
+                {
+                    "startTime": "08:30",
+                    "endTime": "18:30"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                }
+            ]
+        },
+        {
+            "weekday": 5,
+            "timeRanges": [
+                {
+                    "startTime": "08:30",
+                    "endTime": "18:30"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                }
+            ]
+        },
+        {
+            "weekday": 6,
+            "timeRanges": [
+                {
+                    "startTime": "08:30",
+                    "endTime": "18:30"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                }
+            ]
+        },
+        {
+            "weekday": 7,
+            "timeRanges": [
+                {
+                    "startTime": "08:30",
+                    "endTime": "18:30"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                },
+                {
+                    "startTime": "00:00",
+                    "endTime": "00:00"
+                }
+            ]
+        }
+    ]
+}
