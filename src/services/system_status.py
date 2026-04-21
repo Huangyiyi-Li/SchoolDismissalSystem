@@ -45,6 +45,8 @@ class RuntimeStatusStore:
         self._services: dict[str, ServiceState] = {}
 
     def update(self, name: str, state: ServiceState) -> None:
+        if name != state.name:
+            raise ValueError(f"service key '{name}' does not match state name '{state.name}'")
         self._services[name] = state
 
     def snapshot(self) -> DashboardSnapshot:

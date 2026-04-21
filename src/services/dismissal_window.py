@@ -51,7 +51,9 @@ def get_active_window_signature(schedules, fallback_start, fallback_end, now=Non
             return f"dynamic:{weekday}:{start}-{end}"
 
     if not schedules:
-        return f"static:{fallback_start}-{fallback_end}"
+        if _to_minutes(fallback_start) <= current_minutes <= _to_minutes(fallback_end):
+            return f"static:{fallback_start}-{fallback_end}"
+        return None
 
     return None
 

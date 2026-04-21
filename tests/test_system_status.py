@@ -11,6 +11,21 @@ from src.services.system_status import (
 
 
 class SystemStatusTests(unittest.TestCase):
+    def test_update_rejects_mismatched_service_name(self):
+        now = datetime.datetime(2026, 4, 21, 8, 14)
+        store = RuntimeStatusStore()
+        with self.assertRaises(ValueError):
+            store.update(
+                "udp",
+                ServiceState(
+                    name="broadcast",
+                    level=AlertLevel.WARNING,
+                    summary="bad mapping",
+                    detail="wrong key",
+                    updated_at=now,
+                ),
+            )
+
     def test_warning_is_primary_without_auto_escalation(self):
         now = datetime.datetime(2026, 4, 21, 8, 15)
         store = RuntimeStatusStore()

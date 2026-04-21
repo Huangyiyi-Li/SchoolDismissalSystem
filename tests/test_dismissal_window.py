@@ -114,6 +114,26 @@ class DismissalWindowTests(unittest.TestCase):
 
         self.assertIsNone(signature)
 
+    def test_no_schedule_outside_fallback_returns_none(self):
+        now = datetime.datetime(2026, 4, 21, 15, 0)
+
+        signature = get_active_window_signature(
+            [],
+            "16:30",
+            "18:30",
+            now=now,
+        )
+
+        self.assertIsNone(signature)
+        self.assertFalse(
+            is_now_within_window(
+                [],
+                "16:30",
+                "18:30",
+                now=now,
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
