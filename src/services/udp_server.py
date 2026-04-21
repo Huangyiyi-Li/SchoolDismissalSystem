@@ -67,12 +67,16 @@ class UDPServerService(QObject):
         
         device_name = ip
         if self.db:
-            # Persist and get name
-            # Only update DB if needed (optimization: verify frequency?)
-            # For now, upsert every packet might be heavy if high traffic. 
-            # But traffic is low (card swipes).
-            self.db.upsert_device(ip, last_seen=now)
-            device_name = self.db.get_device_name(ip)
+            try:
+                # Persist and get name
+                # Only update DB if needed (optimization: verify frequency?)
+                # For now, upsert every packet might be heavy if high traffic.
+                # But traffic is low (card swipes).
+                self.db.upsert_device(ip, last_seen=now)
+                device_name = self.db.get_device_name(ip) or ip
+            except Exception as e:
+                print(f"[UDP] Device DB Error ({ip}): {e}")
+                device_name = ip
 
         self.device_updated.emit(ip, time_str, "在线", device_name)
 

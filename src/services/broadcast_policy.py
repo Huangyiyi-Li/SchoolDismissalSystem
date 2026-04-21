@@ -82,10 +82,7 @@ def evaluate_swipe(
             reason += "/无API服务"
     elif cooldown_passed:
         if test_mode:
-            if should_voice:
-                reason += "/测试模式"
-            else:
-                action += "/测试模式"
+            reason += "/测试模式"
         else:
             should_push_api = True
             if should_voice:

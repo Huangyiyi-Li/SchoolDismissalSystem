@@ -2,6 +2,7 @@ import datetime
 import unittest
 
 from src.services.broadcast_policy import evaluate_swipe
+from src.services.data_sync_service import _normalize_card_ids
 
 
 class BroadcastPolicyTests(unittest.TestCase):
@@ -44,8 +45,9 @@ class BroadcastPolicyTests(unittest.TestCase):
         )
 
         self.assertFalse(decision.should_voice)
-        self.assertEqual(decision.action, "语音跳过/测试模式")
+        self.assertEqual(decision.action, "语音跳过")
         self.assertIn("重复播报", decision.reason)
+        self.assertIn("测试模式", decision.reason)
 
     def test_non_time_window_path_skips_swipe(self):
         now = datetime.datetime(2026, 4, 21, 12, 0)
@@ -148,6 +150,59 @@ class BroadcastPolicyTests(unittest.TestCase):
         self.assertTrue(decision.should_voice)
         self.assertFalse(decision.should_push_api)
         self.assertIn("推送冷却", decision.reason)
+        self.assertNotIn("测试模式", decision.reason)
+
+    def test_invalid_broadcast_count_falls_back_to_single_repeat(self):
+        now = datetime.datetime(2026, 4, 21, 16, 44)
+        decision = evaluate_swipe(
+            class_name="一年级一班",
+            class_id="1",
+            card_id="card-7",
+            window_signature="dynamic:2:16:30-18:30",
+            now=now,
+            voice_history={},
+            api_push_history={},
+            deduplication_interval_seconds=300,
+            broadcast_count=0,
+            test_mode=False,
+            api_service_available=True,
+        )
+
+        self.assertEqual(decision.voice_text, "一年级一班正在放学")
+
+    def test_invalid_dedup_interval_uses_default_and_cools_down(self):
+        now = datetime.datetime(2026, 4, 21, 16, 45)
+        decision = evaluate_swipe(
+            class_name="一年级一班",
+            class_id="1",
+            card_id="card-8",
+            window_signature="dynamic:2:16:30-18:30",
+            now=now,
+            voice_history={},
+            api_push_history={"card-8": now - datetime.timedelta(seconds=100)},
+            deduplication_interval_seconds="oops",
+            broadcast_count=1,
+            test_mode=False,
+            api_service_available=True,
+        )
+
+        self.assertFalse(decision.should_push_api)
+        self.assertIn("推送冷却", decision.reason)
+
+
+class DataSyncSanitizationTests(unittest.TestCase):
+    def test_normalize_card_ids_strips_and_drops_empty_tokens(self):
+        self.assertEqual(
+            _normalize_card_ids(" 1001, ,1002,, 1003 "),
+            ["1001", "1002", "1003"],
+        )
+
+    def test_normalize_card_ids_handles_list_and_non_string(self):
+        self.assertEqual(
+            _normalize_card_ids([" 2001 ", "", None, "2002"]),
+            ["2001", "2002"],
+        )
+        self.assertEqual(_normalize_card_ids(3001), ["3001"])
 
 
 if __name__ == "__main__":
