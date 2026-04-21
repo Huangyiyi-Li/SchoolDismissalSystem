@@ -25,6 +25,7 @@ Thumbs.db
 
 # Brainstorm artifacts
 .superpowers/
+.worktrees/
 
 # Gradle
 .gradle/
