@@ -81,6 +81,8 @@ python main.py
 - 关闭后：恢复正常 API 推送
 - 适合现场调试设备、语音和时间配置时使用
 
+如需做现场交付或 Windows 主机验收，可参考 [Windows 发布与验收清单](docs/windows-release-checklist.md)。
+
 ## 📂 目录结构
 
 ```
