@@ -84,6 +84,7 @@ class MainWindow(QMainWindow):
         self.maintenance_panel.open_mapping.connect(self._open_mapping_from_maintenance)
         self.maintenance_panel.force_sync.connect(self._force_sync_from_maintenance)
         self.maintenance_panel.exit_maintenance.connect(self.enter_guard_mode)
+        self.maintenance_panel.test_mode_changed.connect(self._set_test_mode)
 
     def _connect_signals(self):
         self.udp_server.card_swiped.connect(self.broadcast_manager.process_swipe)
@@ -110,6 +111,7 @@ class MainWindow(QMainWindow):
     def enter_maintenance_mode(self):
         self.current_mode = "maintenance"
         self.touch_maintenance_session()
+        self.maintenance_panel.set_test_mode(self.config.get("test_mode", False))
         self.mode_stack.setCurrentWidget(self.maintenance_panel)
 
     def request_maintenance_mode(self):
@@ -135,14 +137,38 @@ class MainWindow(QMainWindow):
     def touch_maintenance_session(self):
         self.maintenance_session.touch()
 
+    def require_maintenance_access(self, action_label="维护操作", interactive=True):
+        if not self.maintenance_session.is_unlocked():
+            self.enter_guard_mode()
+            if interactive:
+                QMessageBox.warning(self, "维护会话已锁定", f"{action_label}失败：维护会话已过期。")
+            return False
+        self.touch_maintenance_session()
+        return True
+
     def _check_maintenance_timeout(self):
         if self.current_mode == "maintenance" and not self.maintenance_session.is_unlocked():
             self.enter_guard_mode()
 
     def _online_devices_count(self) -> int:
+        devices = getattr(self.udp_server, "devices", None)
+        if isinstance(devices, dict):
+            now = datetime.datetime.now()
+            return sum(
+                1
+                for last_seen in devices.values()
+                if isinstance(last_seen, datetime.datetime)
+                and (now - last_seen).total_seconds() <= 60
+            )
         return sum(1 for status in self._device_status_map.values() if status == "在线")
 
     def _refresh_dashboard(self):
+        if hasattr(self.udp_server, "check_offline_devices"):
+            try:
+                self.udp_server.check_offline_devices()
+            except Exception:
+                pass
+
         snapshot = self.status_store.snapshot()
         window_label = format_window_label(
             self.config.get("schedules"),
@@ -189,35 +215,48 @@ class MainWindow(QMainWindow):
     def open_mapping_dialog(self):
         from .mapping_dialog import MappingDialog
 
-        self.touch_maintenance_session()
+        if not self.require_maintenance_access("打开卡号映射"):
+            return
         dialog = MappingDialog(self.db, self)
         dialog.exec()
 
     def open_settings_dialog(self):
         from .settings_dialog import SettingsDialog
 
-        self.touch_maintenance_session()
+        if not self.require_maintenance_access("打开学校设置"):
+            return
         dialog = SettingsDialog(self.config, self.data_sync_service, self)
         dialog.exec()
 
     def open_schedule_dialog(self):
         from .schedule_dialog import ScheduleDialog
 
-        self.touch_maintenance_session()
+        if not self.require_maintenance_access("打开放学时间"):
+            return
         dialog = ScheduleDialog(self.config, self)
         dialog.exec()
 
     def open_device_manager(self):
         from .device_manager_dialog import DeviceManagerDialog
 
-        self.touch_maintenance_session()
+        if not self.require_maintenance_access("打开设备管理"):
+            return
         dialog = DeviceManagerDialog(self.db, self)
         dialog.exec()
 
     def _force_sync_data(self):
-        self.touch_maintenance_session()
+        if not self.require_maintenance_access("执行立即同步"):
+            return
         if self.data_sync_service and hasattr(self.data_sync_service, "force_sync"):
             self.data_sync_service.force_sync()
+
+    def _set_test_mode(self, enabled: bool):
+        if not self.require_maintenance_access("切换测试模式"):
+            self.maintenance_panel.set_test_mode(self.config.get("test_mode", False))
+            return
+        self.config.set("test_mode", bool(enabled))
+        self.config.save()
+        self._refresh_dashboard()
 
     def _open_settings_from_maintenance(self):
         self.open_settings_dialog()
@@ -233,4 +272,3 @@ class MainWindow(QMainWindow):
 
     def _force_sync_from_maintenance(self):
         self._force_sync_data()
-

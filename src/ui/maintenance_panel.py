@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QGroupBox, QPushButton, QVBoxLayout, QWidget, QLabel
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QCheckBox, QGroupBox, QPushButton, QVBoxLayout, QWidget, QLabel
 
 
 class MaintenancePanel(QWidget):
@@ -11,6 +11,7 @@ class MaintenancePanel(QWidget):
     open_mapping = pyqtSignal()
     force_sync = pyqtSignal()
     exit_maintenance = pyqtSignal()
+    test_mode_changed = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,6 +47,12 @@ class MaintenancePanel(QWidget):
         btn_sync.clicked.connect(self.force_sync.emit)
         group_layout.addWidget(btn_sync)
 
+        self.test_mode_check = QCheckBox("测试模式 (仅播报，不推送)")
+        self.test_mode_check.stateChanged.connect(
+            lambda state: self.test_mode_changed.emit(state == Qt.CheckState.Checked.value)
+        )
+        group_layout.addWidget(self.test_mode_check)
+
         btn_guard = QPushButton("返回守护模式")
         btn_guard.clicked.connect(self.exit_maintenance.emit)
         group_layout.addWidget(btn_guard)
@@ -53,3 +60,5 @@ class MaintenancePanel(QWidget):
         layout.addWidget(action_group)
         layout.addStretch(1)
 
+    def set_test_mode(self, enabled: bool):
+        self.test_mode_check.setChecked(bool(enabled))

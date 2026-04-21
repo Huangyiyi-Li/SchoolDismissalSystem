@@ -16,6 +16,12 @@ class SettingsDialog(QDialog):
         if parent and hasattr(parent, "touch_maintenance_session"):
             parent.touch_maintenance_session()
 
+    def _require_parent_access(self, action_label: str) -> bool:
+        parent = self.parent()
+        if parent and hasattr(parent, "require_maintenance_access"):
+            return parent.require_maintenance_access(action_label)
+        return True
+
     def setup_ui(self):
         layout = QVBoxLayout(self)
 
@@ -56,6 +62,9 @@ class SettingsDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def save_settings(self):
+        if not self._require_parent_access("保存学校设置"):
+            self.close()
+            return
         self._touch_parent()
         new_school_id = self.school_id_edit.text().strip()
         port_str = self.port_edit.text().strip()
@@ -93,6 +102,9 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def trigger_sync(self, silent=False):
+        if not self._require_parent_access("执行立即同步"):
+            self.close()
+            return
         self._touch_parent()
         if self.sync_service:
             # Apply current text just in case (though save should handle it)

@@ -30,8 +30,6 @@ def main():
     api_service = None
     data_sync_service = None
     
-    school_id = config_manager.get("school_id")
-    
     # Always initialize services to allow hot-binding of School ID
     print(f"[Main] Initializing API Service (School ID: {school_id or 'Not Set'})")
     api_service = ApiService(school_id)
