@@ -93,6 +93,27 @@ class DismissalWindowTests(unittest.TestCase):
             "默认: 16:30 - 18:30",
         )
 
+    def test_dynamic_schedule_today_outside_ranges_returns_none(self):
+        schedules = [
+            {
+                "weekday": 2,
+                "timeRanges": [
+                    {"startTime": "08:00", "endTime": "08:30"},
+                    {"startTime": "12:00", "endTime": "12:30"},
+                ],
+            }
+        ]
+        now = datetime.datetime(2026, 4, 21, 9, 0)
+
+        signature = get_active_window_signature(
+            schedules,
+            "16:30",
+            "18:30",
+            now=now,
+        )
+
+        self.assertIsNone(signature)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,11 +33,11 @@ class ServiceState:
 @dataclass(frozen=True)
 class DashboardSnapshot:
     overall_level: AlertLevel
-    services: dict[str, ServiceState] = field(default_factory=dict)
     primary_alert: ServiceState = field(
         default_factory=lambda: ServiceState.ok("system", "system nominal")
     )
     should_pulse: bool = False
+    services: dict[str, ServiceState] = field(default_factory=dict)
 
 
 class RuntimeStatusStore:
@@ -53,9 +53,9 @@ class RuntimeStatusStore:
             primary = ServiceState.ok("system", "system nominal")
             return DashboardSnapshot(
                 overall_level=AlertLevel.OK,
-                services=services,
                 primary_alert=primary,
                 should_pulse=False,
+                services=services,
             )
 
         severity = {
@@ -63,25 +63,16 @@ class RuntimeStatusStore:
             AlertLevel.WARNING: 1,
             AlertLevel.CRITICAL: 2,
         }
-        primary_name, primary_state = max(
+        _, primary_state = max(
             services.items(),
             key=lambda item: (severity[item[1].level], item[0]),
         )
-
-        if primary_state.level == AlertLevel.WARNING and primary_name == "udp":
-            primary_state = ServiceState(
-                name=primary_state.name,
-                level=AlertLevel.CRITICAL,
-                summary=primary_state.summary,
-                detail=primary_state.detail,
-                updated_at=primary_state.updated_at,
-            )
 
         overall_level = primary_state.level
         should_pulse = primary_state.level == AlertLevel.CRITICAL
         return DashboardSnapshot(
             overall_level=overall_level,
-            services=services,
             primary_alert=primary_state,
             should_pulse=should_pulse,
+            services=services,
         )

@@ -11,7 +11,7 @@ from src.services.system_status import (
 
 
 class SystemStatusTests(unittest.TestCase):
-    def test_warning_becomes_critical_when_udp_is_down(self):
+    def test_warning_is_primary_without_auto_escalation(self):
         now = datetime.datetime(2026, 4, 21, 8, 15)
         store = RuntimeStatusStore()
         store.update(
@@ -29,19 +29,19 @@ class SystemStatusTests(unittest.TestCase):
         snapshot = store.snapshot()
 
         self.assertIsInstance(snapshot, DashboardSnapshot)
-        self.assertEqual(snapshot.overall_level, AlertLevel.CRITICAL)
-        self.assertEqual(snapshot.primary_alert.level, AlertLevel.CRITICAL)
+        self.assertEqual(snapshot.overall_level, AlertLevel.WARNING)
+        self.assertEqual(snapshot.primary_alert.level, AlertLevel.WARNING)
         self.assertEqual(snapshot.primary_alert.summary, "UDP offline")
         self.assertEqual(snapshot.primary_alert.detail, "socket bind lost")
         self.assertEqual(snapshot.primary_alert.updated_at, now)
-        self.assertTrue(snapshot.should_pulse)
+        self.assertFalse(snapshot.should_pulse)
         self.assertEqual(snapshot.services["udp"].level, AlertLevel.WARNING)
         self.assertEqual(snapshot.services["udp"].summary, "UDP offline")
         self.assertEqual(snapshot.services["udp"].detail, "socket bind lost")
         self.assertEqual(snapshot.services["udp"].updated_at, now)
         self.assertEqual(
             [field.name for field in fields(DashboardSnapshot)],
-            ["overall_level", "services", "primary_alert", "should_pulse"],
+            ["overall_level", "primary_alert", "should_pulse", "services"],
         )
 
     def test_ok_services_produce_quiet_snapshot(self):
@@ -63,8 +63,30 @@ class SystemStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             [field.name for field in fields(DashboardSnapshot)],
-            ["overall_level", "services", "primary_alert", "should_pulse"],
+            ["overall_level", "primary_alert", "should_pulse", "services"],
         )
+
+    def test_critical_service_pulses(self):
+        now = datetime.datetime(2026, 4, 21, 8, 17)
+        store = RuntimeStatusStore()
+        store.update("udp", ServiceState.ok("udp", "udp ok", now))
+        store.update(
+            "broadcast",
+            ServiceState(
+                name="broadcast",
+                level=AlertLevel.CRITICAL,
+                summary="tts unavailable",
+                detail="driver init failed",
+                updated_at=now,
+            ),
+        )
+
+        snapshot = store.snapshot()
+
+        self.assertEqual(snapshot.overall_level, AlertLevel.CRITICAL)
+        self.assertEqual(snapshot.primary_alert.name, "broadcast")
+        self.assertEqual(snapshot.primary_alert.level, AlertLevel.CRITICAL)
+        self.assertTrue(snapshot.should_pulse)
 
 
 if __name__ == "__main__":
