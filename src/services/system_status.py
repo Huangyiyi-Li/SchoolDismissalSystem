@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as _dt
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -14,17 +15,28 @@ class AlertLevel(Enum):
 class ServiceState:
     name: str
     level: AlertLevel
-    message: str = ""
+    summary: str
+    detail: str = ""
+    updated_at: _dt.datetime = field(default_factory=_dt.datetime.now)
 
     @classmethod
-    def ok(cls, name: str, message: str = "") -> "ServiceState":
-        return cls(name=name, level=AlertLevel.OK, message=message)
+    def ok(cls, name: str, summary: str, now: _dt.datetime | None = None) -> "ServiceState":
+        return cls(
+            name=name,
+            level=AlertLevel.OK,
+            summary=summary,
+            detail="",
+            updated_at=now or _dt.datetime.now(),
+        )
 
 
 @dataclass(frozen=True)
 class DashboardSnapshot:
+    overall_level: AlertLevel
     services: dict[str, ServiceState] = field(default_factory=dict)
-    primary_alert: ServiceState = field(default_factory=lambda: ServiceState.ok("system"))
+    primary_alert: ServiceState = field(
+        default_factory=lambda: ServiceState.ok("system", "system nominal")
+    )
     should_pulse: bool = False
 
 
@@ -38,8 +50,13 @@ class RuntimeStatusStore:
     def snapshot(self) -> DashboardSnapshot:
         services = dict(self._services)
         if not services:
-            primary = ServiceState.ok("system")
-            return DashboardSnapshot(services=services, primary_alert=primary, should_pulse=False)
+            primary = ServiceState.ok("system", "system nominal")
+            return DashboardSnapshot(
+                overall_level=AlertLevel.OK,
+                services=services,
+                primary_alert=primary,
+                should_pulse=False,
+            )
 
         severity = {
             AlertLevel.OK: 0,
@@ -55,11 +72,15 @@ class RuntimeStatusStore:
             primary_state = ServiceState(
                 name=primary_state.name,
                 level=AlertLevel.CRITICAL,
-                message=primary_state.message,
+                summary=primary_state.summary,
+                detail=primary_state.detail,
+                updated_at=primary_state.updated_at,
             )
 
+        overall_level = primary_state.level
         should_pulse = primary_state.level == AlertLevel.CRITICAL
         return DashboardSnapshot(
+            overall_level=overall_level,
             services=services,
             primary_alert=primary_state,
             should_pulse=should_pulse,
