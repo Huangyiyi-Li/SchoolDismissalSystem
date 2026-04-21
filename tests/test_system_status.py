@@ -103,6 +103,37 @@ class SystemStatusTests(unittest.TestCase):
         self.assertEqual(snapshot.primary_alert.level, AlertLevel.CRITICAL)
         self.assertTrue(snapshot.should_pulse)
 
+    def test_primary_alert_prefers_newer_state_when_severity_ties(self):
+        older = datetime.datetime(2026, 4, 21, 8, 10)
+        newer = datetime.datetime(2026, 4, 21, 8, 20)
+        store = RuntimeStatusStore()
+        store.update(
+            "zzz_service",
+            ServiceState(
+                name="zzz_service",
+                level=AlertLevel.WARNING,
+                summary="older warning",
+                detail="older",
+                updated_at=older,
+            ),
+        )
+        store.update(
+            "aaa_service",
+            ServiceState(
+                name="aaa_service",
+                level=AlertLevel.WARNING,
+                summary="newer warning",
+                detail="newer",
+                updated_at=newer,
+            ),
+        )
+
+        snapshot = store.snapshot()
+
+        self.assertEqual(snapshot.overall_level, AlertLevel.WARNING)
+        self.assertEqual(snapshot.primary_alert.name, "aaa_service")
+        self.assertEqual(snapshot.primary_alert.updated_at, newer)
+
 
 if __name__ == "__main__":
     unittest.main()

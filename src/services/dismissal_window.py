@@ -7,13 +7,28 @@ def _normalize_now(now: _dt.datetime | None) -> _dt.datetime:
     return now or _dt.datetime.now()
 
 
-def _parse_hhmm(value: str) -> tuple[int, int]:
-    hour_str, minute_str = value.split(":", 1)
-    return int(hour_str), int(minute_str)
+def _parse_hhmm(value: str) -> tuple[int, int] | None:
+    if not isinstance(value, str):
+        return None
+    parts = value.split(":", 1)
+    if len(parts) != 2:
+        return None
+    hour_str, minute_str = parts
+    try:
+        hour = int(hour_str)
+        minute = int(minute_str)
+    except (TypeError, ValueError):
+        return None
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return hour, minute
 
 
-def _to_minutes(value: str) -> int:
-    hour, minute = _parse_hhmm(value)
+def _to_minutes(value: str) -> int | None:
+    parsed = _parse_hhmm(value)
+    if parsed is None:
+        return None
+    hour, minute = parsed
     return hour * 60 + minute
 
 
@@ -34,6 +49,8 @@ def _today_ranges(schedules: list[dict] | None, now: _dt.datetime) -> list[tuple
             start = item.get("startTime")
             end = item.get("endTime")
             if start and end and (start != "00:00" or end != "00:00"):
+                if _to_minutes(start) is None or _to_minutes(end) is None:
+                    continue
                 today.append((weekday, start, end))
     return today
 
@@ -50,6 +67,8 @@ def _weekday_ranges(schedules: list[dict] | None, weekday: int) -> list[tuple[in
             start = item.get("startTime")
             end = item.get("endTime")
             if start and end and (start != "00:00" or end != "00:00"):
+                if _to_minutes(start) is None or _to_minutes(end) is None:
+                    continue
                 ranges.append((weekday, start, end))
     return ranges
 
@@ -80,6 +99,8 @@ def get_active_window_signature(schedules, fallback_start, fallback_end, now=Non
         for weekday, start, end in today_ranges:
             start_minutes = _to_minutes(start)
             end_minutes = _to_minutes(end)
+            if start_minutes is None or end_minutes is None:
+                continue
             if _in_dynamic_today_range(current_minutes, start_minutes, end_minutes):
                 return f"dynamic:{weekday}:{start}-{end}"
 
@@ -88,6 +109,8 @@ def get_active_window_signature(schedules, fallback_start, fallback_end, now=Non
         for weekday, start, end in previous_ranges:
             start_minutes = _to_minutes(start)
             end_minutes = _to_minutes(end)
+            if start_minutes is None or end_minutes is None:
+                continue
             if _in_dynamic_spillover_range(current_minutes, start_minutes, end_minutes):
                 return f"dynamic:{weekday}:{start}-{end}"
 
@@ -95,6 +118,8 @@ def get_active_window_signature(schedules, fallback_start, fallback_end, now=Non
 
     start_minutes = _to_minutes(fallback_start)
     end_minutes = _to_minutes(fallback_end)
+    if start_minutes is None or end_minutes is None:
+        return None
     if _in_static_range(current_minutes, start_minutes, end_minutes):
         return f"static:{fallback_start}-{fallback_end}"
 

@@ -67,7 +67,11 @@ class RuntimeStatusStore:
         }
         _, primary_state = max(
             services.items(),
-            key=lambda item: (severity[item[1].level], item[0]),
+            key=lambda item: (
+                severity[item[1].level],
+                item[1].updated_at,
+                item[0],
+            ),
         )
 
         overall_level = primary_state.level

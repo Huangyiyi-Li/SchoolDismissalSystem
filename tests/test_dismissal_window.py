@@ -208,6 +208,62 @@ class DismissalWindowTests(unittest.TestCase):
             get_active_window_signature([], "16:30", "16:30", now=outside),
         )
 
+    def test_invalid_schedule_times_are_skipped_safely(self):
+        schedules = [
+            {
+                "weekday": 2,
+                "timeRanges": [
+                    {"startTime": "bad", "endTime": "08:30"},
+                    {"startTime": "08:00", "endTime": "08:30"},
+                ],
+            }
+        ]
+        now = datetime.datetime(2026, 4, 21, 8, 15)
+
+        self.assertEqual(
+            get_active_window_signature(schedules, "16:30", "18:30", now=now),
+            "dynamic:2:08:00-08:30",
+        )
+        self.assertEqual(
+            format_window_label(schedules, "16:30", "18:30", now=now),
+            "今日: 08:00-08:30",
+        )
+
+    def test_invalid_schedule_times_fail_safe_when_no_valid_ranges(self):
+        schedules = [
+            {
+                "weekday": 2,
+                "timeRanges": [
+                    {"startTime": "xx:yy", "endTime": "08:30"},
+                ],
+            }
+        ]
+        now = datetime.datetime(2026, 4, 21, 8, 15)
+
+        self.assertIsNone(
+            get_active_window_signature(schedules, "16:30", "18:30", now=now),
+        )
+        self.assertFalse(
+            is_now_within_window(schedules, "16:30", "18:30", now=now),
+        )
+        self.assertEqual(
+            format_window_label(schedules, "16:30", "18:30", now=now),
+            "今日: 无可用时段",
+        )
+
+    def test_invalid_fallback_times_are_unavailable(self):
+        now = datetime.datetime(2026, 4, 21, 17, 15)
+
+        self.assertIsNone(
+            get_active_window_signature([], "bad", "18:30", now=now),
+        )
+        self.assertIsNone(
+            get_active_window_signature([], "16:30", "24:99", now=now),
+        )
+        self.assertFalse(
+            is_now_within_window([], "bad", "18:30", now=now),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
