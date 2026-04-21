@@ -272,7 +272,7 @@ class MainWindow(QMainWindow):
 
         if not self.require_maintenance_access("打开设备管理"):
             return
-        dialog = DeviceManagerDialog(self.db, self)
+        dialog = DeviceManagerDialog(self.db, self.config, self)
         dialog.exec()
 
     def _force_sync_data(self):

@@ -25,6 +25,7 @@ args = [
     "--hidden-import=pyttsx3.drivers.sapi5",
     "--hidden-import=requests",
     "--add-data=src;src",
+    "--add-binary=vendor/rfpro/win64/comPro.dll;vendor/rfpro/win64",
 ]
 
 PyInstaller.__main__.run(args)
