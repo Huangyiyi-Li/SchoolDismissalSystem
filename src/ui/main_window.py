@@ -56,6 +56,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         self._setup_ui()
+        self._apply_window_styles()
         self._connect_signals()
         self._setup_shortcuts()
         self._setup_timers()
@@ -66,7 +67,9 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         central = QWidget()
+        central.setObjectName("mainShell")
         root_layout = QVBoxLayout(central)
+        root_layout.setContentsMargins(0, 0, 0, 0)
         self.setCentralWidget(central)
 
         self.mode_stack = QStackedWidget()
@@ -85,6 +88,22 @@ class MainWindow(QMainWindow):
         self.maintenance_panel.force_sync.connect(self._force_sync_from_maintenance)
         self.maintenance_panel.exit_maintenance.connect(self.enter_guard_mode)
         self.maintenance_panel.test_mode_changed.connect(self._set_test_mode)
+
+    def _apply_window_styles(self):
+        self.setStyleSheet(
+            """
+            QMainWindow {
+                background: #07111d;
+            }
+            QWidget#mainShell {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #07111d, stop:0.55 #091423, stop:1 #0b1930);
+            }
+            QInputDialog, QMessageBox {
+                background: #0d1829;
+            }
+            """
+        )
 
     def _connect_signals(self):
         self.udp_server.card_swiped.connect(self.broadcast_manager.process_swipe)
@@ -182,6 +201,7 @@ class MainWindow(QMainWindow):
         )
 
         self.dashboard_view.set_banner(vm.banner_text, vm.should_pulse)
+        self.dashboard_view.set_clock_text(datetime.datetime.now().strftime("%H:%M:%S"))
         self.dashboard_view.set_devices_text(vm.online_devices_text)
         self.dashboard_view.set_window_text(vm.window_label)
         self.dashboard_view.set_runtime_text(
