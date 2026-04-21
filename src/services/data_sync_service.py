@@ -1,15 +1,32 @@
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QThread
 import time
+import datetime
+
+from .system_status import AlertLevel, RuntimeStatusStore, ServiceState
 
 class DataSyncWorker(QObject):
     finished = pyqtSignal()
     
-    def __init__(self, api_service, db_manager, config_manager):
+    def __init__(self, api_service, db_manager, config_manager, status_store=None):
         super().__init__()
         self.api = api_service
         self.db = db_manager
         self.config = config_manager
+        self.status_store = status_store or RuntimeStatusStore()
         self.running = True
+
+    def _set_sync_status(self, level, summary, detail=""):
+        now = datetime.datetime.now()
+        self.status_store.update(
+            "sync",
+            ServiceState(
+                name="sync",
+                level=level,
+                summary=summary,
+                detail=detail,
+                updated_at=now,
+            ),
+        )
 
     def run(self):
         # Initial sync on start
@@ -23,43 +40,47 @@ class DataSyncWorker(QObject):
     def sync_all(self):
         if not self.api.school_id:
             print("[Sync] Skipping sync: School ID not set.")
+            self._set_sync_status(AlertLevel.WARNING, "sync skipped", "school id not set")
             return
 
         print("[Sync] Starting data sync...")
-        self.sync_classes()
-        self.sync_schedule()
+        classes_ok = self.sync_classes()
+        schedule_ok = self.sync_schedule()
         print("[Sync] Data sync completed.")
+        if classes_ok and schedule_ok:
+            self._set_sync_status(AlertLevel.OK, "sync completed")
+        elif classes_ok or schedule_ok:
+            self._set_sync_status(AlertLevel.WARNING, "sync partial")
+        else:
+            self._set_sync_status(AlertLevel.WARNING, "sync no updates")
 
     def sync_classes(self):
         classes = self.api.get_classes()
-        if classes:
-            count = 0
-            for cls in classes:
-                # cls: {classId, cardId, classVoiceName, ...}
-                # Note: cardId in document says "Array" or String?
-                # Example: "cardId": "1". If it handles list, we iterate.
-                # Assuming simple relation for now as per previous logic.
-                
-                card_id_raw = cls.get("cardId")
-                # Fallback to className if classVoiceName is missing
-                class_name = cls.get("classVoiceName") or cls.get("className")
-                class_id = cls.get("classId")
-                
-                if card_id_raw and class_name:
-                    # If card_id_raw is comma separated or list?
-                    cards = []
-                    if isinstance(card_id_raw, list):
-                        cards = card_id_raw
-                    elif isinstance(card_id_raw, str):
-                        cards = card_id_raw.split(',') # Just in case
-                    else:
-                        cards = [str(card_id_raw)]
-                        
-                    for c_id in cards:
-                        # Pass school_id (from API Service config) to DB
-                        self.db.add_mapping(c_id, class_name, class_id, school_id=self.api.school_id)
-                        count += 1
-            print(f"[Sync] Synced {count} card mappings.")
+        if not classes:
+            print("[Sync] No classes returned from API or error occurred.")
+            return False
+
+        count = 0
+        for cls in classes:
+            # cls: {classId, cardId, classVoiceName, ...}
+            card_id_raw = cls.get("cardId")
+            class_name = cls.get("classVoiceName") or cls.get("className")
+            class_id = cls.get("classId")
+
+            if card_id_raw and class_name:
+                cards = []
+                if isinstance(card_id_raw, list):
+                    cards = card_id_raw
+                elif isinstance(card_id_raw, str):
+                    cards = card_id_raw.split(',') # Just in case
+                else:
+                    cards = [str(card_id_raw)]
+
+                for c_id in cards:
+                    self.db.add_mapping(c_id, class_name, class_id, school_id=self.api.school_id)
+                    count += 1
+        print(f"[Sync] Synced {count} card mappings.")
+        return count > 0
 
     def sync_schedule(self):
         schedules = self.api.get_school_dismissal_schedule()
@@ -69,8 +90,10 @@ class DataSyncWorker(QObject):
             self.config.set("schedules", schedules)
             self.config.save()
             print(f"[Sync] Schedule fetched and saved: {len(schedules)} rules.")
+            return True
         else:
             print("[Sync] No schedule returned from API or error occurred.")
+            return False
 
     def stop_timer(self):
         if hasattr(self, 'timer'):
@@ -81,10 +104,15 @@ class DataSyncService(QObject):
     force_sync_signal = pyqtSignal()
     stop_signal = pyqtSignal()
 
-    def __init__(self, api_service, db_manager, config_manager):
+    def __init__(self, api_service, db_manager, config_manager, status_store=None):
         super().__init__()
         self.thread = QThread()
-        self.worker = DataSyncWorker(api_service, db_manager, config_manager)
+        self.worker = DataSyncWorker(
+            api_service,
+            db_manager,
+            config_manager,
+            status_store=status_store,
+        )
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.force_sync_signal.connect(self.worker.sync_all)
