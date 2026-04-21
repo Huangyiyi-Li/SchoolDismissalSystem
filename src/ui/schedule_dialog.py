@@ -11,7 +11,13 @@ class ScheduleDialog(QDialog):
         self.resize(600, 400)
         self.setup_ui()
 
+    def _touch_parent(self):
+        parent = self.parent()
+        if parent and hasattr(parent, "touch_maintenance_session"):
+            parent.touch_maintenance_session()
+
     def setup_ui(self):
+        self._touch_parent()
         layout = QVBoxLayout(self)
 
         # Title / Info

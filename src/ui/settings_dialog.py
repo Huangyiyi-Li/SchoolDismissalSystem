@@ -11,6 +11,11 @@ class SettingsDialog(QDialog):
         self.resize(400, 150)
         self.setup_ui()
 
+    def _touch_parent(self):
+        parent = self.parent()
+        if parent and hasattr(parent, "touch_maintenance_session"):
+            parent.touch_maintenance_session()
+
     def setup_ui(self):
         layout = QVBoxLayout(self)
 
@@ -51,6 +56,7 @@ class SettingsDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def save_settings(self):
+        self._touch_parent()
         new_school_id = self.school_id_edit.text().strip()
         port_str = self.port_edit.text().strip()
 
@@ -87,6 +93,7 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def trigger_sync(self, silent=False):
+        self._touch_parent()
         if self.sync_service:
             # Apply current text just in case (though save should handle it)
             # Now self.sync_service.api should work thanks to property

@@ -12,6 +12,11 @@ class MappingDialog(QDialog):
         self.setup_ui()
         self.load_data()
 
+    def _touch_parent(self):
+        parent = self.parent()
+        if parent and hasattr(parent, "touch_maintenance_session"):
+            parent.touch_maintenance_session()
+
     def setup_ui(self):
         layout = QVBoxLayout(self)
 
@@ -48,6 +53,7 @@ class MappingDialog(QDialog):
         layout.addWidget(self.table)
 
     def load_data(self):
+        self._touch_parent()
         rows = self.db.get_all_mappings()
         self.table.setRowCount(0)
         for row in rows:
@@ -68,6 +74,7 @@ class MappingDialog(QDialog):
         self.table.setCellWidget(row_idx, 3, del_btn)
 
     def add_mapping(self):
+        self._touch_parent()
         card_id = self.card_input.text().strip().upper()
         class_name = self.class_input.text().strip()
         school_id = self.school_input.text().strip()
@@ -86,6 +93,7 @@ class MappingDialog(QDialog):
             QMessageBox.critical(self, "错误", "数据库错误")
 
     def delete_mapping(self, card_id):
+        self._touch_parent()
         confirm = QMessageBox.question(self, "确认", f"确定要删除卡号 {card_id} 吗？", 
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if confirm == QMessageBox.StandardButton.Yes:

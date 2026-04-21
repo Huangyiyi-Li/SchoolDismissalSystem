@@ -12,6 +12,11 @@ class DeviceManagerDialog(QDialog):
         self.setup_ui()
         self.load_data()
 
+    def _touch_parent(self):
+        parent = self.parent()
+        if parent and hasattr(parent, "touch_maintenance_session"):
+            parent.touch_maintenance_session()
+
     def setup_ui(self):
         layout = QVBoxLayout(self)
 
@@ -42,6 +47,7 @@ class DeviceManagerDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def load_data(self):
+        self._touch_parent()
         self.table.setRowCount(0)
         devices = self.db.get_devices() # [(ip, name, last_seen), ...]
         
@@ -52,6 +58,7 @@ class DeviceManagerDialog(QDialog):
             self.table.setItem(row_idx, 2, QTableWidgetItem(str(last_seen)))
 
     def edit_device_name(self):
+        self._touch_parent()
         current_row = self.table.currentRow()
         if current_row < 0:
             QMessageBox.warning(self, "提示", "请先选择一个设备")
