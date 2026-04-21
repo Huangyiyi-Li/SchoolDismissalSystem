@@ -22,7 +22,13 @@ class UDPParserTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_udp_packet(bytes(packet))
 
+    def test_invalid_length_raises_value_error(self):
+        packet = bytearray(21)
+        packet[0] = 0xC1
+
+        with self.assertRaises(ValueError):
+            parse_udp_packet(bytes(packet))
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -77,23 +77,22 @@ def evaluate_swipe(
         last_push is None or (now - last_push).total_seconds() > cooldown_seconds
     )
 
-    if test_mode:
-        if should_voice:
-            reason += "/测试模式"
-        return SwipeDecision(should_voice, voice_text, False, action, reason)
-
     if not api_service_available or not class_id:
         if should_voice:
             reason += "/无API服务"
-        return SwipeDecision(should_voice, voice_text, False, action, reason)
-
-    if cooldown_passed:
-        should_push_api = True
-        if should_voice:
-            reason += "/推送成功"
+    elif cooldown_passed:
+        if test_mode:
+            if should_voice:
+                reason += "/测试模式"
+            else:
+                action += "/测试模式"
         else:
-            action += "/推送成功"
-    else:
+            should_push_api = True
+            if should_voice:
+                reason += "/推送成功"
+            else:
+                action += "/推送成功"
+    else:  # cooldown not passed
         if should_voice:
             reason += "/推送冷却"
         else:
