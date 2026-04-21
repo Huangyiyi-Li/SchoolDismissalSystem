@@ -4,16 +4,21 @@ import datetime
 import time
 import queue
 import os
+import logging
 
 from .broadcast_policy import evaluate_swipe
 from .dismissal_window import get_active_window_signature
 from .system_status import AlertLevel, RuntimeStatusStore, ServiceState
+from .tts_settings import normalize_tts_rate, normalize_tts_volume
 
 class TTSWorker(QObject):
     finished = pyqtSignal()
+    spoken = pyqtSignal(str)
+    error = pyqtSignal(str)
     
-    def __init__(self):
+    def __init__(self, config_manager=None):
         super().__init__()
+        self.config = config_manager
         self.queue = queue.Queue()
         self.retry_count = 3
         self.running = True
@@ -31,30 +36,45 @@ class TTSWorker(QObject):
 
         while self.running:
             try:
-                if not self.queue.empty():
-                    text = self.queue.get()
-                    print(f"[TTS] Broadcasting: {text}")
-                    
-                    try:
-                        # Re-init engine for each broadcast to prevent SAPI state issues
-                        engine = pyttsx3.init()
-                        engine.setProperty('volume', 1.0)
-                        engine.say(text)
-                        
-                        # Use runAndWait to block until finished
-                        engine.runAndWait()
-                        
-                        # Cleanup engine explicitly
-                        engine.stop()
-                        del engine
-                    except Exception as e_inner:
-                         print(f"[TTS] Inner Loop Error: {e_inner}")
+                try:
+                    text = self.queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
 
-                    time.sleep(0.5) 
-                else:
-                    time.sleep(0.1)
+                if text is None:
+                    continue
+
+                print(f"[TTS] Broadcasting: {text}")
+
+                try:
+                    engine = pyttsx3.init()
+                    rate = normalize_tts_rate(
+                        self.config.get("tts_rate", 160) if self.config else 160
+                    )
+                    volume = normalize_tts_volume(
+                        self.config.get("tts_volume", 1.0) if self.config else 1.0
+                    )
+                    engine.setProperty("rate", rate)
+                    engine.setProperty("volume", volume)
+                    logging.getLogger(__name__).info(
+                        "TTS speak start rate=%s volume=%.2f text=%s",
+                        rate,
+                        volume,
+                        text,
+                    )
+                    engine.say(text)
+                    engine.runAndWait()
+                    engine.stop()
+                    del engine
+                    self.spoken.emit(text)
+                except Exception as e_inner:
+                    logging.getLogger(__name__).exception("TTS playback failed")
+                    self.error.emit(str(e_inner))
+
+                time.sleep(0.5)
             except Exception as e:
-                print(f"[TTS] Playback Error: {e}")
+                logging.getLogger(__name__).exception("TTS worker loop failed")
+                self.error.emit(str(e))
                 time.sleep(1)
         
         # Cleanup COM in the WORKER THREAD
@@ -66,6 +86,7 @@ class TTSWorker(QObject):
 
     def stop(self):
         self.running = False
+        self.queue.put(None)
         # Do NOT uninitialize COM here, as this runs in Main Thread!
 
 
@@ -91,9 +112,11 @@ class BroadcastManager(QObject):
         
         # TTS Thread
         self.tts_thread = QThread()
-        self.tts_worker = TTSWorker()
+        self.tts_worker = TTSWorker(config_manager)
         self.tts_worker.moveToThread(self.tts_thread)
         self.tts_thread.started.connect(self.tts_worker.run)
+        self.tts_worker.spoken.connect(self._handle_tts_success)
+        self.tts_worker.error.connect(self._handle_tts_error)
         self.tts_thread.start()
         self._set_status(AlertLevel.OK, "broadcast ready")
 
@@ -165,6 +188,15 @@ class BroadcastManager(QObject):
             self._set_status(AlertLevel.WARNING, "invalid card", card_id)
         else:
             self._set_status(AlertLevel.OK, "swipe processed", decision.action)
+
+    @pyqtSlot(str)
+    def _handle_tts_success(self, text):
+        logging.getLogger(__name__).info("TTS playback finished")
+        self._set_status(AlertLevel.OK, "tts ok", text[:32])
+
+    @pyqtSlot(str)
+    def _handle_tts_error(self, detail):
+        self._set_status(AlertLevel.WARNING, "tts failed", detail)
 
     def is_within_time_window(self):
         return self.get_current_window_signature() is not None

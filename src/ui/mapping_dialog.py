@@ -75,7 +75,20 @@ class MappingDialog(QDialog):
         self.table.setItem(row_idx, 2, QTableWidgetItem(str(school_id) if school_id else ""))
         
         del_btn = QPushButton("删除")
-        del_btn.setStyleSheet("color: red;")
+        del_btn.setStyleSheet(
+            "QPushButton {"
+            "background: #3a1621;"
+            "border: 1px solid #8a3145;"
+            "border-radius: 10px;"
+            "color: #ffe5ea;"
+            "font-weight: 600;"
+            "padding: 6px 10px;"
+            "}"
+            "QPushButton:hover {"
+            "background: #552131;"
+            "border-color: #bc4b63;"
+            "}"
+        )
         del_btn.clicked.connect(lambda: self.delete_mapping(card_id))
         self.table.setCellWidget(row_idx, 3, del_btn)
 

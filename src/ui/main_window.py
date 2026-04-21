@@ -101,6 +101,17 @@ class MainWindow(QMainWindow):
             }
             QInputDialog, QMessageBox {
                 background: #0d1829;
+                color: #edf5ff;
+            }
+            QInputDialog QLabel, QMessageBox QLabel {
+                color: #edf5ff;
+            }
+            QInputDialog QLineEdit {
+                background: #091423;
+                color: #f8fbff;
+                border: 1px solid #35506d;
+                border-radius: 10px;
+                padding: 4px 10px;
             }
             """
         )

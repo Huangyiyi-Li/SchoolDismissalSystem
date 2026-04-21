@@ -22,7 +22,8 @@ class ScheduleDialog(QDialog):
 
         # Title / Info
         info_label = QLabel("以下时间表由服务器同步，仅供参考。")
-        info_label.setStyleSheet("color: gray; font-style: italic; margin-bottom: 10px;")
+        info_label.setProperty("muted", True)
+        info_label.setStyleSheet("font-style: italic; margin-bottom: 10px;")
         layout.addWidget(info_label)
 
         # Tab Widget for Weekdays

@@ -8,6 +8,8 @@ class ConfigManager:
         "time_window_start": "16:30",
         "time_window_end": "18:30",
         "broadcast_count": 3,
+        "tts_rate": 160,
+        "tts_volume": 1.0,
         "deduplication_interval_seconds": 300,
         "test_mode": False,
         "maintenance_pin": "1234",
