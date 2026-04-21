@@ -26,6 +26,7 @@ class DashboardPresenterTests(unittest.TestCase):
 
         self.assertEqual(vm.overall_level, AlertLevel.CRITICAL)
         self.assertTrue(vm.should_pulse)
+        self.assertTrue(vm.banner_text.startswith("[告警]"))
         self.assertIn("udp down", vm.banner_text)
 
     def test_online_devices_text_formatting(self):
@@ -41,8 +42,29 @@ class DashboardPresenterTests(unittest.TestCase):
         vm = presenter.build(snapshot=snapshot, online_devices=3, window_label="默认: 16:30 - 18:30")
 
         self.assertEqual(vm.online_devices_text, "在线设备: 3 台")
+        self.assertTrue(vm.banner_text.startswith("[正常]"))
+
+    def test_online_devices_text_handles_invalid_input(self):
+        now = datetime.datetime(2026, 4, 21, 10, 7, 0)
+        snapshot = DashboardSnapshot(
+            overall_level=AlertLevel.WARNING,
+            primary_alert=ServiceState(
+                name="sync",
+                level=AlertLevel.WARNING,
+                summary="sync partial",
+                detail="schedule empty",
+                updated_at=now,
+            ),
+            should_pulse=False,
+            services={},
+        )
+        presenter = DashboardPresenter()
+
+        vm = presenter.build(snapshot=snapshot, online_devices=None, window_label="默认: 16:30 - 18:30")
+
+        self.assertEqual(vm.online_devices_text, "在线设备: 0 台")
+        self.assertTrue(vm.banner_text.startswith("[注意]"))
 
 
 if __name__ == "__main__":
     unittest.main()
-

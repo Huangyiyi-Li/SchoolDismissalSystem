@@ -15,6 +15,13 @@ class DashboardViewModel:
 
 
 class DashboardPresenter:
+    def _safe_online_devices_count(self, online_devices) -> int:
+        try:
+            value = int(online_devices)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, value)
+
     def build(self, snapshot: DashboardSnapshot, online_devices: int, window_label: str) -> DashboardViewModel:
         level_prefix = {
             AlertLevel.OK: "[正常]",
@@ -23,7 +30,7 @@ class DashboardPresenter:
         }.get(snapshot.overall_level, "[状态]")
 
         banner_text = f"{level_prefix} {snapshot.primary_alert.summary}"
-        online_devices_text = f"在线设备: {max(0, int(online_devices))} 台"
+        online_devices_text = f"在线设备: {self._safe_online_devices_count(online_devices)} 台"
 
         return DashboardViewModel(
             banner_text=banner_text,
@@ -32,4 +39,3 @@ class DashboardPresenter:
             window_label=window_label,
             overall_level=snapshot.overall_level,
         )
-

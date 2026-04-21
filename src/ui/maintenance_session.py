@@ -10,7 +10,25 @@ class MaintenanceSessionController:
         self._deadline: _dt.datetime | None = None
 
     def _normalize_now(self, now: _dt.datetime | None) -> _dt.datetime:
-        return now or _dt.datetime.now()
+        if now is None:
+            if self._deadline is not None and self._deadline.tzinfo is not None:
+                current = _dt.datetime.now(tz=self._deadline.tzinfo)
+            else:
+                current = _dt.datetime.now()
+        else:
+            current = now
+
+        if self._deadline is None:
+            return current
+
+        # Keep comparison safe across naive/aware datetime inputs.
+        deadline_is_aware = self._deadline.tzinfo is not None
+        current_is_aware = current.tzinfo is not None
+        if deadline_is_aware and not current_is_aware:
+            return current.replace(tzinfo=self._deadline.tzinfo)
+        if not deadline_is_aware and current_is_aware:
+            return current.replace(tzinfo=None)
+        return current
 
     def _is_active_at(self, current: _dt.datetime) -> bool:
         return self._deadline is not None and current <= self._deadline
@@ -33,4 +51,3 @@ class MaintenanceSessionController:
             self._deadline = None
             return False
         return True
-
