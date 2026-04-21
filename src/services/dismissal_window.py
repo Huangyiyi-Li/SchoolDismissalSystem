@@ -38,22 +38,65 @@ def _today_ranges(schedules: list[dict] | None, now: _dt.datetime) -> list[tuple
     return today
 
 
+def _weekday_ranges(schedules: list[dict] | None, weekday: int) -> list[tuple[int, str, str]]:
+    if not schedules:
+        return []
+
+    ranges = []
+    for schedule in schedules:
+        if schedule.get("weekday") != weekday:
+            continue
+        for item in schedule.get("timeRanges", []):
+            start = item.get("startTime")
+            end = item.get("endTime")
+            if start and end and (start != "00:00" or end != "00:00"):
+                ranges.append((weekday, start, end))
+    return ranges
+
+
+def _in_static_range(current_minutes: int, start_minutes: int, end_minutes: int) -> bool:
+    if start_minutes <= end_minutes:
+        return start_minutes <= current_minutes <= end_minutes
+    return current_minutes >= start_minutes or current_minutes <= end_minutes
+
+
+def _in_dynamic_today_range(current_minutes: int, start_minutes: int, end_minutes: int) -> bool:
+    if start_minutes <= end_minutes:
+        return start_minutes <= current_minutes <= end_minutes
+    return current_minutes >= start_minutes
+
+
+def _in_dynamic_spillover_range(current_minutes: int, start_minutes: int, end_minutes: int) -> bool:
+    return start_minutes > end_minutes and current_minutes <= end_minutes
+
+
 def get_active_window_signature(schedules, fallback_start, fallback_end, now=None):
     current = _normalize_now(now)
-    today_ranges = _today_ranges(schedules, current)
-
-    if schedules and not today_ranges:
-        return None
-
     current_minutes = current.hour * 60 + current.minute
-    for weekday, start, end in today_ranges:
-        if _to_minutes(start) <= current_minutes <= _to_minutes(end):
-            return f"dynamic:{weekday}:{start}-{end}"
 
-    if not schedules:
-        if _to_minutes(fallback_start) <= current_minutes <= _to_minutes(fallback_end):
-            return f"static:{fallback_start}-{fallback_end}"
+    if schedules:
+        today_weekday = _current_weekday(current)
+        today_ranges = _weekday_ranges(schedules, today_weekday)
+        for weekday, start, end in today_ranges:
+            start_minutes = _to_minutes(start)
+            end_minutes = _to_minutes(end)
+            if _in_dynamic_today_range(current_minutes, start_minutes, end_minutes):
+                return f"dynamic:{weekday}:{start}-{end}"
+
+        previous_weekday = 7 if today_weekday == 1 else today_weekday - 1
+        previous_ranges = _weekday_ranges(schedules, previous_weekday)
+        for weekday, start, end in previous_ranges:
+            start_minutes = _to_minutes(start)
+            end_minutes = _to_minutes(end)
+            if _in_dynamic_spillover_range(current_minutes, start_minutes, end_minutes):
+                return f"dynamic:{weekday}:{start}-{end}"
+
         return None
+
+    start_minutes = _to_minutes(fallback_start)
+    end_minutes = _to_minutes(fallback_end)
+    if _in_static_range(current_minutes, start_minutes, end_minutes):
+        return f"static:{fallback_start}-{fallback_end}"
 
     return None
 
@@ -69,5 +112,8 @@ def format_window_label(schedules, fallback_start, fallback_end, now=None):
     if today_ranges:
         ranges_text = ", ".join(f"{start}-{end}" for _, start, end in today_ranges)
         return f"今日: {ranges_text}"
+
+    if schedules:
+        return "今日: 无可用时段"
 
     return f"默认: {fallback_start} - {fallback_end}"
