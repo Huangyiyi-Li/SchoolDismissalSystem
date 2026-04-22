@@ -104,8 +104,9 @@ class UDPServerService(QObject):
             self.tcp_packet_counts[client_id] = 0
             try:
                 client.setSocketOption(QAbstractSocket.SocketOption.KeepAliveOption, 1)
+                client.setSocketOption(QAbstractSocket.SocketOption.LowDelayOption, 1)
             except Exception:
-                LOGGER.debug("Failed to enable TCP keepalive for reader socket", exc_info=True)
+                LOGGER.debug("Failed to configure TCP reader socket options", exc_info=True)
             client.readyRead.connect(lambda cid=client_id: self._read_tcp_client(cid))
             client.disconnected.connect(lambda cid=client_id: self._handle_tcp_disconnect(cid))
             client.errorOccurred.connect(lambda _error, cid=client_id: self._handle_tcp_error(cid))
@@ -125,7 +126,7 @@ class UDPServerService(QObject):
         if not chunk:
             return
 
-        LOGGER.info(
+        LOGGER.debug(
             "TCP reader chunk from %s: %s bytes hex=%s ascii=%s",
             peer_ip,
             len(chunk),
@@ -140,7 +141,7 @@ class UDPServerService(QObject):
         self.tcp_buffers[client_id] = pending
 
         if not packets and not card_lines:
-            LOGGER.info(
+            LOGGER.debug(
                 "TCP reader chunk from %s did not form a complete packet yet; buffered=%s bytes",
                 peer_ip,
                 len(pending),

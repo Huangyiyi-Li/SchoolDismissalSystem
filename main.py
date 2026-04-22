@@ -35,6 +35,26 @@ def main():
         config_manager = ConfigManager()
         db_manager = DatabaseManager()
         status_store = RuntimeStatusStore()
+        reader_port = config_manager.get("udp_port", 39169)
+
+        # Start the reader listener as early as possible so TCP client readers
+        # do not miss the service window during Windows auto-start.
+        udp_server = UDPServerService(
+            port=reader_port,
+            db_manager=db_manager,
+            status_store=status_store,
+        )
+        listener_started = udp_server.start()
+        if listener_started:
+            logging.getLogger(__name__).info(
+                "Reader listeners ready before UI bootstrap on port %s",
+                reader_port,
+            )
+        else:
+            logging.getLogger(__name__).warning(
+                "Reader listeners failed to bind during early startup on port %s",
+                reader_port,
+            )
 
         # API & Sync
         from src.services.api_service import ApiService
@@ -59,11 +79,6 @@ def main():
             api_service=api_service,
             status_store=status_store,
         )
-        udp_server = UDPServerService(
-            port=config_manager.get("udp_port", 39169),
-            db_manager=db_manager,
-            status_store=status_store,
-        )
 
         window = MainWindow(
             config_manager,
@@ -76,8 +91,8 @@ def main():
         window.enter_guard_mode()
         window.showMaximized()
 
-        if not udp_server.start():
-            print("Error: Could not bind UDP port.")
+        if not listener_started:
+            print("Error: Could not bind reader port.")
 
         logging.getLogger(__name__).info(
             "UI ready. runtime_log=%s crash_log=%s",
