@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import concurrent.futures
 import ipaddress
 import logging
 import socket
@@ -208,6 +209,7 @@ class RFProSDKBackend:
     def discover_devices(
         self,
         listen_port: int = DEFAULT_DEVICE_DISCOVERY_PORT,
+        command_port: int = DEFAULT_DEVICE_COMMAND_PORT,
         timeout_seconds: float = 1.5,
     ) -> list[NetworkDiscoveryEntry]:
         self._ensure_available()
@@ -229,7 +231,11 @@ class RFProSDKBackend:
         finally:
             self._dll.lc_net_serverExit()
 
-        return [NetworkDiscoveryEntry(path=item) for item in best_result]
+        if best_result:
+            return [NetworkDiscoveryEntry(path=item) for item in best_result]
+
+        fallback_paths = self._scan_local_subnet(command_port=int(command_port))
+        return [NetworkDiscoveryEntry(path=item) for item in fallback_paths]
 
     def read_profile(self, *, current_ip: str | None, current_port: int, device_path: str | None) -> DeviceNetworkProfile:
         handle = self._open_handle(current_ip=current_ip, current_port=current_port, device_path=device_path)
@@ -325,6 +331,49 @@ class RFProSDKBackend:
         if not self.is_available:
             raise DeviceNetworkError(self.availability_reason or "网络配置组件不可用。")
 
+    def _scan_local_subnet(self, command_port: int, timeout_seconds: float = 0.18) -> list[str]:
+        host_ip = detect_host_ipv4()
+        network = ipaddress.IPv4Network(f"{host_ip}/24", strict=False)
+        host_text = str(ipaddress.IPv4Address(host_ip))
+        candidates = [
+            str(ip)
+            for ip in network.hosts()
+            if str(ip) != host_text
+        ]
+
+        def probe(ip_text: str) -> str | None:
+            try:
+                with socket.create_connection((ip_text, command_port), timeout=timeout_seconds):
+                    return ip_text
+            except OSError:
+                return None
+
+        reachable_ips: list[str] = []
+        max_workers = min(32, max(4, len(candidates) // 8))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {executor.submit(probe, ip_text): ip_text for ip_text in candidates}
+            for future in concurrent.futures.as_completed(future_map):
+                ip_text = future.result()
+                if ip_text:
+                    reachable_ips.append(ip_text)
+
+        verified_endpoints: list[str] = []
+        for ip_text in sorted(set(reachable_ips)):
+            endpoint = f"{ip_text}:{command_port}"
+            handle = -1
+            try:
+                for mode in (5, 4):
+                    handle = self._dll.lc_init_ex(mode, endpoint.encode("ascii"), 0)
+                    if handle != -1:
+                        LOGGER.info("Subnet scan verified reader endpoint=%s mode=%s", endpoint, mode)
+                        verified_endpoints.append(endpoint)
+                        break
+            finally:
+                if handle != -1:
+                    self._dll.lc_exit(handle)
+
+        return verified_endpoints
+
 
 class DeviceNetworkService:
     def __init__(self, config_manager=None, backend: RFProSDKBackend | None = None):
@@ -352,7 +401,10 @@ class DeviceNetworkService:
         return getattr(self.backend, "availability_reason", "")
 
     def discover_devices(self) -> list[NetworkDiscoveryEntry]:
-        return self.backend.discover_devices(self.discovery_port)
+        return self.backend.discover_devices(
+            listen_port=self.discovery_port,
+            command_port=self.command_port,
+        )
 
     def read_profile(
         self,
