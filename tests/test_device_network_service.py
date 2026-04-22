@@ -1,8 +1,11 @@
 import unittest
+from unittest.mock import patch
 
 from src.services.device_network_service import (
     DeviceNetworkProfile,
     DeviceNetworkService,
+    _score_host_ipv4,
+    detect_host_ipv4,
     parse_device_path_list,
     suggest_device_profile,
 )
@@ -16,8 +19,13 @@ class _FakeBackend:
         self.last_apply_request = None
         self.last_discover_request = None
 
-    def discover_devices(self, listen_port, command_port, exclude_paths=None):
-        self.last_discover_request = (listen_port, command_port, list(exclude_paths or []))
+    def discover_devices(self, listen_port, command_port, exclude_paths=None, allow_subnet_scan=True):
+        self.last_discover_request = (
+            listen_port,
+            command_port,
+            list(exclude_paths or []),
+            allow_subnet_scan,
+        )
         return []
 
     def read_profile(self, *, current_ip, current_port, device_path):
@@ -111,7 +119,7 @@ class DeviceNetworkServiceTests(unittest.TestCase):
 
         service.discover_devices()
 
-        self.assertEqual(backend.last_discover_request, (51006, 1000, []))
+        self.assertEqual(backend.last_discover_request, (51006, 1000, [], True))
 
     def test_device_network_service_passes_excluded_paths(self):
         backend = _FakeBackend()
@@ -119,7 +127,27 @@ class DeviceNetworkServiceTests(unittest.TestCase):
 
         service.discover_devices(exclude_paths=["192.168.1.80:1000"])
 
-        self.assertEqual(backend.last_discover_request, (51006, 1000, ["192.168.1.80:1000"]))
+        self.assertEqual(backend.last_discover_request, (51006, 1000, ["192.168.1.80:1000"], True))
+
+    def test_device_network_service_can_skip_subnet_scan(self):
+        backend = _FakeBackend()
+        service = DeviceNetworkService(_FakeConfig(), backend=backend)
+
+        service.discover_devices(allow_subnet_scan=False)
+
+        self.assertEqual(backend.last_discover_request, (51006, 1000, [], False))
+
+    def test_detect_host_ipv4_prefers_private_lan_over_virtual_range(self):
+        with patch(
+            "src.services.device_network_service._iter_host_ipv4_candidates",
+            return_value=["198.18.0.10", "192.168.1.50", "10.0.0.9"],
+        ):
+            detected = detect_host_ipv4()
+
+        self.assertEqual(detected, "192.168.1.50")
+
+    def test_score_host_ipv4_penalizes_virtual_benchmark_range(self):
+        self.assertGreater(_score_host_ipv4("192.168.1.50"), _score_host_ipv4("198.18.0.10"))
 
 
 if __name__ == "__main__":

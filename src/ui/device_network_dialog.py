@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+import logging
+
+from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -22,6 +24,44 @@ from ..services.device_network_service import (
     DeviceNetworkService,
 )
 
+LOGGER = logging.getLogger(__name__)
+
+
+class _DiscoveryWorker(QObject):
+    finished = pyqtSignal(str, object)
+    failed = pyqtSignal(str, str)
+
+    def __init__(
+        self,
+        network_service: DeviceNetworkService,
+        action: str,
+        *,
+        exclude_paths: list[str] | None = None,
+        allow_subnet_scan: bool = True,
+    ):
+        super().__init__()
+        self.network_service = network_service
+        self.action = action
+        self.exclude_paths = exclude_paths or []
+        self.allow_subnet_scan = allow_subnet_scan
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            entries = self.network_service.discover_devices(
+                exclude_paths=self.exclude_paths,
+                allow_subnet_scan=self.allow_subnet_scan,
+            )
+        except DeviceNetworkError as exc:
+            self.failed.emit(self.action, str(exc))
+            return
+        except Exception as exc:
+            LOGGER.exception("Unexpected reader discovery failure")
+            self.failed.emit(self.action, str(exc))
+            return
+
+        self.finished.emit(self.action, entries)
+
 
 class DeviceNetworkDialog(QDialog):
     def __init__(
@@ -39,6 +79,8 @@ class DeviceNetworkDialog(QDialog):
         self.occupied_ips = occupied_ips or []
         self._baseline_paths: list[str] = []
         self._baseline_recorded = False
+        self._discovery_thread: QThread | None = None
+        self._discovery_worker: _DiscoveryWorker | None = None
 
         self.setWindowTitle(f"配置刷卡器网络 - {self.current_name}")
         self.resize(640, 520)
@@ -222,93 +264,149 @@ class DeviceNetworkDialog(QDialog):
         if entries:
             self.discovery_combo.setCurrentIndex(1)
 
-    def capture_baseline(self):
+    def _set_discovery_busy(self, busy: bool, hint_text: str = ""):
+        self.scan_btn.setEnabled(not busy and self.network_service.is_available)
+        self.snapshot_btn.setEnabled(not busy and self.network_service.is_available)
+        self.new_device_btn.setEnabled(not busy and self.network_service.is_available)
+        if hint_text:
+            self.discovery_hint.setText(hint_text)
+
+    def _start_discovery(
+        self,
+        action: str,
+        *,
+        allow_subnet_scan: bool,
+        exclude_paths: list[str] | None,
+        hint_text: str,
+    ):
+        if self._discovery_thread is not None:
+            return
         if not self._require_parent_access("搜索可配置设备"):
             self.close()
             return
+
         self._touch_parent()
-        try:
-            entries = self.network_service.discover_devices()
-        except DeviceNetworkError as exc:
-            QMessageBox.warning(self, "记录失败", str(exc))
-            return
+        self._set_discovery_busy(True, hint_text)
 
-        self._baseline_paths = [entry.path for entry in entries]
-        self._baseline_recorded = True
-        self.discovery_hint.setText(
-            f"已记录当前网络状态，当前识别到 {len(entries)} 台刷卡器。"
-            " 现在接入新刷卡器后，点击“查找新接入刷卡器”。"
+        self._discovery_thread = QThread(self)
+        self._discovery_worker = _DiscoveryWorker(
+            self.network_service,
+            action,
+            exclude_paths=exclude_paths,
+            allow_subnet_scan=allow_subnet_scan,
         )
-        QMessageBox.information(
-            self,
-            "已记录当前状态",
-            f"当前已确认 {len(entries)} 台刷卡器。\n\n"
-            "请现在接入或上电新的刷卡器，然后点击“查找新接入刷卡器”。",
-        )
+        self._discovery_worker.moveToThread(self._discovery_thread)
+        self._discovery_thread.started.connect(self._discovery_worker.run)
+        self._discovery_worker.finished.connect(self._handle_discovery_finished)
+        self._discovery_worker.failed.connect(self._handle_discovery_failed)
+        self._discovery_worker.finished.connect(self._cleanup_discovery_thread)
+        self._discovery_worker.failed.connect(self._cleanup_discovery_thread)
+        self._discovery_thread.start()
 
-    def scan_current_devices(self):
-        if not self._require_parent_access("搜索可配置设备"):
-            self.close()
+    def _cleanup_discovery_thread(self, *_args):
+        if self._discovery_thread is None:
             return
-        self._touch_parent()
-        try:
-            entries = self.network_service.discover_devices()
-        except DeviceNetworkError as exc:
-            QMessageBox.warning(self, "搜索失败", str(exc))
-            return
+        self._discovery_thread.quit()
+        self._discovery_thread.wait()
+        if self._discovery_worker is not None:
+            self._discovery_worker.deleteLater()
+        self._discovery_thread.deleteLater()
+        self._discovery_worker = None
+        self._discovery_thread = None
+        self._set_discovery_busy(False)
 
-        self._refresh_discovery_combo(entries)
-        if not entries:
+    def _handle_discovery_finished(self, action: str, entries):
+        if action == "baseline":
+            self._baseline_paths = [entry.path for entry in entries]
+            self._baseline_recorded = True
+            self.discovery_hint.setText(
+                f"已记录当前网络状态，当前识别到 {len(entries)} 台刷卡器。"
+                " 现在接入新刷卡器后，点击“查找新接入刷卡器”。"
+            )
             QMessageBox.information(
                 self,
-                "搜索完成",
-                "没有发现能直接读取网络配置的刷卡器。\n\n"
-                "你仍然可以手动输入当前设备 IP 和端口继续配置，"
-                "或者先记录当前网络状态，再用“查找新接入刷卡器”缩小范围。",
+                "已记录当前状态",
+                f"当前已确认 {len(entries)} 台刷卡器。\n\n"
+                "请现在接入或上电新的刷卡器，然后点击“查找新接入刷卡器”。",
             )
             return
 
-        self.discovery_hint.setText(f"已发现 {len(entries)} 台已确认刷卡器。")
-        QMessageBox.information(self, "搜索完成", f"已发现 {len(entries)} 台已确认刷卡器。")
+        self._refresh_discovery_combo(entries)
+        if action == "scan":
+            if not entries:
+                QMessageBox.information(
+                    self,
+                    "搜索完成",
+                    "没有发现能直接读取网络配置的刷卡器。\n\n"
+                    "你仍然可以手动输入当前设备 IP 和端口继续配置，"
+                    "或者先记录当前网络状态，再用“查找新接入刷卡器”缩小范围。",
+                )
+                return
+
+            self.discovery_hint.setText(f"已发现 {len(entries)} 台已确认刷卡器。")
+            QMessageBox.information(self, "搜索完成", f"已发现 {len(entries)} 台已确认刷卡器。")
+            return
+
+        if action == "new":
+            if entries:
+                self.discovery_hint.setText(
+                    f"发现 {len(entries)} 台新接入刷卡器候选，列表里只保留了能读取配置的设备。"
+                )
+                QMessageBox.information(
+                    self,
+                    "发现新设备",
+                    f"发现 {len(entries)} 台新接入刷卡器候选。\n\n"
+                    "列表里已经过滤掉无法读取网络配置的普通网络设备。",
+                )
+                return
+
+            self.discovery_hint.setText(
+                "没有找到新接入刷卡器。可以重新记录当前网络状态后再试，"
+                "或者直接手动输入刷卡器当前 IP。"
+            )
+            QMessageBox.information(
+                self,
+                "未发现新设备",
+                "没有找到新接入刷卡器。\n\n"
+                "如果设备刚刚接入，请等待几秒再试；"
+                "如果仍然没有结果，可以重新记录当前网络状态，或直接手动输入当前 IP。",
+            )
+
+    def _handle_discovery_failed(self, action: str, message: str):
+        titles = {
+            "baseline": "记录失败",
+            "scan": "搜索失败",
+            "new": "搜索失败",
+        }
+        self.discovery_hint.setText("设备搜索失败，请检查网络后重试，或改用手动输入当前 IP。")
+        QMessageBox.warning(self, titles.get(action, "搜索失败"), message)
+
+    def capture_baseline(self):
+        self._start_discovery(
+            "baseline",
+            allow_subnet_scan=False,
+            exclude_paths=None,
+            hint_text="正在记录当前网络状态，不会深度扫描整网，请稍候...",
+        )
+
+    def scan_current_devices(self):
+        self._start_discovery(
+            "scan",
+            allow_subnet_scan=True,
+            exclude_paths=None,
+            hint_text="正在扫描当前在线刷卡器，界面保持可操作，请稍候...",
+        )
 
     def find_new_devices(self):
         if not self._baseline_recorded:
             self.capture_baseline()
             return
 
-        if not self._require_parent_access("搜索新接入刷卡器"):
-            self.close()
-            return
-        self._touch_parent()
-        try:
-            entries = self.network_service.discover_devices(exclude_paths=self._baseline_paths)
-        except DeviceNetworkError as exc:
-            QMessageBox.warning(self, "搜索失败", str(exc))
-            return
-
-        self._refresh_discovery_combo(entries)
-        if entries:
-            self.discovery_hint.setText(
-                f"发现 {len(entries)} 台新接入刷卡器候选，列表里只保留了能读取配置的设备。"
-            )
-            QMessageBox.information(
-                self,
-                "发现新设备",
-                f"发现 {len(entries)} 台新接入刷卡器候选。\n\n"
-                "列表里已经过滤掉无法读取网络配置的普通网络设备。",
-            )
-            return
-
-        self.discovery_hint.setText(
-            "没有找到新接入刷卡器。可以重新记录当前网络状态后再试，"
-            "或者直接手动输入刷卡器当前 IP。"
-        )
-        QMessageBox.information(
-            self,
-            "未发现新设备",
-            "没有找到新接入刷卡器。\n\n"
-            "如果设备刚刚接入，请等待几秒再试；"
-            "如果仍然没有结果，可以重新记录当前网络状态，或直接手动输入当前 IP。",
+        self._start_discovery(
+            "new",
+            allow_subnet_scan=True,
+            exclude_paths=self._baseline_paths,
+            hint_text="正在查找新接入刷卡器，界面保持可操作，请稍候...",
         )
 
     def read_current_profile(self):

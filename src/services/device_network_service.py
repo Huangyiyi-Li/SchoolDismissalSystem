@@ -17,6 +17,12 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_DEVICE_COMMAND_PORT = 1000
 DEFAULT_DEVICE_DISCOVERY_PORT = 51006
 DEFAULT_SUBNET_MASK = "255.255.255.0"
+_BENCHMARK_NETWORK = ipaddress.IPv4Network("198.18.0.0/15")
+_RFC1918_NETWORKS = (
+    ipaddress.IPv4Network("192.168.0.0/16"),
+    ipaddress.IPv4Network("10.0.0.0/8"),
+    ipaddress.IPv4Network("172.16.0.0/12"),
+)
 
 
 class DeviceNetworkError(RuntimeError):
@@ -59,19 +65,76 @@ def normalize_ipv4(ip_text: str) -> str:
         raise DeviceNetworkError(f"无效的 IPv4 地址: {ip_text}") from exc
 
 
-def detect_host_ipv4() -> str:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.connect(("192.0.2.1", 80))
-        detected_ip = sock.getsockname()[0]
-        return normalize_ipv4(detected_ip)
-    except OSError:
+def _iter_host_ipv4_candidates() -> list[str]:
+    candidates: list[str] = []
+
+    def remember(ip_text: str | None) -> None:
+        if not _is_valid_ipv4(ip_text):
+            return
+        normalized = normalize_ipv4(ip_text)
+        if normalized not in candidates:
+            candidates.append(normalized)
+
+    for target in ("8.8.8.8", "1.1.1.1", "192.0.2.1"):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            return normalize_ipv4(socket.gethostbyname(socket.gethostname()))
+            sock.connect((target, 80))
+            remember(sock.getsockname()[0])
         except OSError:
-            return "127.0.0.1"
-    finally:
-        sock.close()
+            continue
+        finally:
+            sock.close()
+
+    try:
+        for ip_text in socket.gethostbyname_ex(socket.gethostname())[2]:
+            remember(ip_text)
+    except OSError:
+        pass
+
+    try:
+        for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM):
+            remember(item[4][0])
+    except OSError:
+        pass
+
+    return candidates
+
+
+def _score_host_ipv4(ip_text: str) -> tuple[int, int]:
+    address = ipaddress.IPv4Address(normalize_ipv4(ip_text))
+    score = 0
+
+    if address.is_loopback or address.is_multicast or address.is_unspecified:
+        return (-100, -int(address))
+    if address.is_link_local:
+        return (-50, -int(address))
+    if address in _BENCHMARK_NETWORK:
+        return (-40, -int(address))
+
+    if address in _RFC1918_NETWORKS[0]:
+        score = 300
+    elif address in _RFC1918_NETWORKS[1]:
+        score = 290
+    elif address in _RFC1918_NETWORKS[2]:
+        score = 280
+    elif address.is_private:
+        score = 250
+    elif address.is_global:
+        score = 120
+    else:
+        score = 20
+
+    return (score, -int(address))
+
+
+def detect_host_ipv4() -> str:
+    candidates = _iter_host_ipv4_candidates()
+    if not candidates:
+        return "127.0.0.1"
+
+    selected = max(candidates, key=_score_host_ipv4)
+    LOGGER.info("Selected host IPv4 %s from candidates=%s", selected, candidates)
+    return selected
 
 
 def suggest_device_profile(
@@ -213,6 +276,7 @@ class RFProSDKBackend:
         command_port: int = DEFAULT_DEVICE_COMMAND_PORT,
         timeout_seconds: float = 1.5,
         exclude_paths: Iterable[str] | None = None,
+        allow_subnet_scan: bool = True,
     ) -> list[NetworkDiscoveryEntry]:
         self._ensure_available()
         status = self._dll.lc_net_serverStart(int(listen_port))
@@ -235,6 +299,9 @@ class RFProSDKBackend:
 
         if best_result:
             return self._verify_discovered_paths(best_result, exclude_paths=exclude_paths)
+
+        if not allow_subnet_scan:
+            return []
 
         fallback_paths = self._scan_local_subnet(command_port=int(command_port))
         return self._verify_discovered_paths(fallback_paths, exclude_paths=exclude_paths)
@@ -458,11 +525,16 @@ class DeviceNetworkService:
     def availability_reason(self) -> str:
         return getattr(self.backend, "availability_reason", "")
 
-    def discover_devices(self, exclude_paths: Iterable[str] | None = None) -> list[NetworkDiscoveryEntry]:
+    def discover_devices(
+        self,
+        exclude_paths: Iterable[str] | None = None,
+        allow_subnet_scan: bool = True,
+    ) -> list[NetworkDiscoveryEntry]:
         return self.backend.discover_devices(
             listen_port=self.discovery_port,
             command_port=self.command_port,
             exclude_paths=exclude_paths,
+            allow_subnet_scan=allow_subnet_scan,
         )
 
     def read_profile(
