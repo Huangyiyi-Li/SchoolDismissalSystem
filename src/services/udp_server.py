@@ -7,7 +7,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtNetwork import QAbstractSocket, QHostAddress, QTcpServer, QTcpSocket, QUdpSocket
 
 from .system_status import AlertLevel, RuntimeStatusStore, ServiceState
-from .udp_parser import extract_tcp_packets, parse_udp_packet
+from .udp_parser import extract_ascii_card_lines, extract_tcp_packets, parse_udp_packet
 
 LOGGER = logging.getLogger(__name__)
 
@@ -129,9 +129,10 @@ class UDPServerService(QObject):
         buffer = self.tcp_buffers.setdefault(client_id, bytearray())
         buffer.extend(chunk)
         packets, pending = extract_tcp_packets(buffer)
+        card_lines, pending = extract_ascii_card_lines(pending)
         self.tcp_buffers[client_id] = pending
 
-        if not packets:
+        if not packets and not card_lines:
             LOGGER.info(
                 "TCP reader chunk from %s did not form a complete packet yet; buffered=%s bytes",
                 peer_ip,
@@ -141,6 +142,10 @@ class UDPServerService(QObject):
         for packet in packets:
             self.tcp_packet_counts[client_id] = self.tcp_packet_counts.get(client_id, 0) + 1
             self.parse_packet(packet, peer_ip, protocol="tcp")
+
+        for card_id in card_lines:
+            self.tcp_packet_counts[client_id] = self.tcp_packet_counts.get(client_id, 0) + 1
+            self.parse_card_id(card_id, peer_ip, protocol="tcp-text")
 
     def _handle_tcp_disconnect(self, client_id: int):
         client = self.tcp_clients.pop(client_id, None)
@@ -226,6 +231,18 @@ class UDPServerService(QObject):
         print(f"[{protocol.upper()}] Received Card ID: {card_id_str} from {ip} Seq:{seq_id}")
         self._set_status(protocol, AlertLevel.OK, f"{protocol} packet parsed", f"seq={seq_id}")
         self.card_swiped.emit(card_id_str, ip)
+
+    def parse_card_id(self, card_id, ip, protocol="tcp-text"):
+        self._mark_device_online(ip)
+        normalized_card_id = str(card_id).strip()
+        if not normalized_card_id or not normalized_card_id.isdigit():
+            LOGGER.warning("Discarded non-numeric card id from %s via %s: %r", ip, protocol, card_id)
+            self._set_status(protocol, AlertLevel.WARNING, f"{protocol} invalid card", str(card_id))
+            return
+
+        print(f"[{protocol.upper()}] Received Card ID: {normalized_card_id} from {ip}")
+        self._set_status(protocol, AlertLevel.OK, f"{protocol} card parsed", normalized_card_id)
+        self.card_swiped.emit(normalized_card_id, ip)
 
     def check_offline_devices(self):
         now = datetime.datetime.now()

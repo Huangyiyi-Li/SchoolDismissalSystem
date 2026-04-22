@@ -43,3 +43,30 @@ def extract_tcp_packets(buffer: bytes | bytearray) -> tuple[list[bytes], bytearr
         del pending[:PACKET_LENGTH]
 
     return packets, pending
+
+
+def extract_ascii_card_lines(buffer: bytes | bytearray) -> tuple[list[str], bytearray]:
+    pending = bytearray(buffer)
+    card_ids: list[str] = []
+
+    while True:
+        newline_index = pending.find(b"\n")
+        if newline_index == -1:
+            break
+
+        raw_line = bytes(pending[: newline_index + 1])
+        del pending[: newline_index + 1]
+
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        try:
+            decoded = line.decode("ascii")
+        except UnicodeDecodeError:
+            continue
+
+        if decoded.isdigit():
+            card_ids.append(decoded)
+
+    return card_ids, pending

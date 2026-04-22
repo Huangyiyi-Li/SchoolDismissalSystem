@@ -1,6 +1,6 @@
 import unittest
 
-from src.services.udp_parser import extract_tcp_packets, parse_udp_packet
+from src.services.udp_parser import extract_ascii_card_lines, extract_tcp_packets, parse_udp_packet
 
 
 class UDPParserTests(unittest.TestCase):
@@ -57,6 +57,18 @@ class UDPParserTests(unittest.TestCase):
 
         self.assertEqual(packets, [packet])
         self.assertEqual(bytes(pending), b"")
+
+    def test_extract_ascii_card_lines_reads_crlf_delimited_card_ids(self):
+        card_ids, pending = extract_ascii_card_lines(b"3655451601\r\n9876543210\r\n")
+
+        self.assertEqual(card_ids, ["3655451601", "9876543210"])
+        self.assertEqual(bytes(pending), b"")
+
+    def test_extract_ascii_card_lines_keeps_partial_line(self):
+        card_ids, pending = extract_ascii_card_lines(b"3655451601\r\n12345")
+
+        self.assertEqual(card_ids, ["3655451601"])
+        self.assertEqual(bytes(pending), b"12345")
 
 
 if __name__ == "__main__":
