@@ -1,15 +1,22 @@
-from PyQt6.QtNetwork import QUdpSocket, QHostAddress
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer
+from __future__ import annotations
+
 import datetime
+import logging
+
+from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtNetwork import QAbstractSocket, QHostAddress, QTcpServer, QTcpSocket, QUdpSocket
 
 from .system_status import AlertLevel, RuntimeStatusStore, ServiceState
-from .udp_parser import parse_udp_packet
+from .udp_parser import extract_tcp_packets, parse_udp_packet
+
+LOGGER = logging.getLogger(__name__)
+
 
 class UDPServerService(QObject):
     # Signal to emit when a valid card is swiped: (card_id, ip_address)
     card_swiped = pyqtSignal(str, str)
-    # Signal to update device list in UI: (ip, last_seen, status, name) - Updated signature
-    device_updated = pyqtSignal(str, str, str, str) 
+    # Signal to update device list in UI: (ip, last_seen, status, name)
+    device_updated = pyqtSignal(str, str, str, str)
 
     def __init__(self, port=39169, db_manager=None, status_store=None):
         super().__init__()
@@ -17,115 +24,200 @@ class UDPServerService(QObject):
         self.db = db_manager
         self.status_store = status_store or RuntimeStatusStore()
         self.socket = None
+        self.tcp_server = None
+        self.tcp_clients: dict[int, QTcpSocket] = {}
+        self.tcp_buffers: dict[int, bytearray] = {}
         self.devices = {}  # {ip: last_seen_datetime}
         self.packet_history = {}
 
-    def _set_status(self, level, summary, detail=""):
+    def _set_status(self, service_name, level, summary, detail=""):
         now = datetime.datetime.now()
         self.status_store.update(
-            "udp",
+            service_name,
             ServiceState(
-                name="udp",
+                name=service_name,
                 level=level,
                 summary=summary,
                 detail=detail,
                 updated_at=now,
             ),
         )
-        
+
     def start(self):
+        udp_ok = self._start_udp()
+        tcp_ok = self._start_tcp()
+        return udp_ok and tcp_ok
+
+    def _start_udp(self):
         self.socket = QUdpSocket(self)
         if self.socket.bind(QHostAddress.SpecialAddress.Any, self.port):
             self.socket.readyRead.connect(self.process_pending_datagrams)
             print(f"[UDP] Listening on port {self.port}")
-            self._set_status(AlertLevel.OK, "udp listening", f"port={self.port}")
+            self._set_status("udp", AlertLevel.OK, "udp listening", f"port={self.port}")
             return True
-        else:
-            print(f"[UDP] Failed to bind port {self.port}")
-            self._set_status(AlertLevel.CRITICAL, "udp bind failed", f"port={self.port}")
-            return False
+
+        print(f"[UDP] Failed to bind port {self.port}")
+        self._set_status("udp", AlertLevel.CRITICAL, "udp bind failed", f"port={self.port}")
+        return False
+
+    def _start_tcp(self):
+        self.tcp_server = QTcpServer(self)
+        if self.tcp_server.listen(QHostAddress.SpecialAddress.Any, self.port):
+            self.tcp_server.newConnection.connect(self._accept_tcp_connections)
+            print(f"[TCP] Listening on port {self.port}")
+            self._set_status("tcp", AlertLevel.OK, "tcp listening", f"port={self.port}")
+            return True
+
+        print(f"[TCP] Failed to listen on port {self.port}")
+        self._set_status("tcp", AlertLevel.CRITICAL, "tcp bind failed", f"port={self.port}")
+        return False
 
     def stop(self):
         if self.socket:
             self.socket.close()
 
+        if self.tcp_server:
+            self.tcp_server.close()
+
+        for socket_obj in list(self.tcp_clients.values()):
+            socket_obj.abort()
+            socket_obj.deleteLater()
+
+        self.tcp_clients.clear()
+        self.tcp_buffers.clear()
+
     def process_pending_datagrams(self):
         while self.socket.hasPendingDatagrams():
-            datagram, host, port = self.socket.readDatagram(self.socket.pendingDatagramSize())
-            ip = host.toString()
-            # Handle IPv6 mapped IPv4
-            if ip.startswith("::ffff:"):
-                ip = ip[7:]
-                
-            self.parse_datagram(datagram, ip)
+            datagram, host, _port = self.socket.readDatagram(self.socket.pendingDatagramSize())
+            ip = self._normalize_ip(host.toString())
+            self.parse_packet(datagram, ip, protocol="udp")
 
-    def parse_datagram(self, data, ip):
-        # Update device status
-        now = datetime.datetime.now()
-        self.devices[ip] = now
-        time_str = now.strftime("%H:%M:%S")
-        
+    def _accept_tcp_connections(self):
+        while self.tcp_server.hasPendingConnections():
+            client = self.tcp_server.nextPendingConnection()
+            client_id = id(client)
+            self.tcp_clients[client_id] = client
+            self.tcp_buffers[client_id] = bytearray()
+            client.readyRead.connect(lambda cid=client_id: self._read_tcp_client(cid))
+            client.disconnected.connect(lambda cid=client_id: self._handle_tcp_disconnect(cid))
+            client.errorOccurred.connect(lambda _error, cid=client_id: self._handle_tcp_error(cid))
+            peer_ip = self._normalize_ip(client.peerAddress().toString())
+            LOGGER.info("Accepted TCP reader connection from %s", peer_ip)
+
+    def _read_tcp_client(self, client_id: int):
+        client = self.tcp_clients.get(client_id)
+        if client is None:
+            return
+
+        peer_ip = self._normalize_ip(client.peerAddress().toString())
+        self._mark_device_online(peer_ip)
+
+        chunk = bytes(client.readAll())
+        if not chunk:
+            return
+
+        buffer = self.tcp_buffers.setdefault(client_id, bytearray())
+        buffer.extend(chunk)
+        packets, pending = extract_tcp_packets(buffer)
+        self.tcp_buffers[client_id] = pending
+
+        for packet in packets:
+            self.parse_packet(packet, peer_ip, protocol="tcp")
+
+    def _handle_tcp_disconnect(self, client_id: int):
+        client = self.tcp_clients.pop(client_id, None)
+        self.tcp_buffers.pop(client_id, None)
+        if client is None:
+            return
+
+        peer_ip = self._normalize_ip(client.peerAddress().toString())
+        LOGGER.info("TCP reader disconnected from %s", peer_ip)
+        client.deleteLater()
+
+    def _handle_tcp_error(self, client_id: int):
+        client = self.tcp_clients.get(client_id)
+        if client is None:
+            return
+
+        peer_ip = self._normalize_ip(client.peerAddress().toString())
+        error_text = client.errorString()
+        LOGGER.warning("TCP reader error from %s: %s", peer_ip, error_text)
+        self._set_status("tcp", AlertLevel.WARNING, "tcp client warning", error_text)
+
+    def _normalize_ip(self, ip):
+        if ip.startswith("::ffff:"):
+            return ip[7:]
+        return ip
+
+    def _device_name_for_ip(self, ip):
         device_name = ip
         if self.db:
             try:
-                # Persist and get name
-                # Only update DB if needed (optimization: verify frequency?)
-                # For now, upsert every packet might be heavy if high traffic.
-                # But traffic is low (card swipes).
-                self.db.upsert_device(ip, last_seen=now)
+                self.db.upsert_device(ip, last_seen=datetime.datetime.now())
                 device_name = self.db.get_device_name(ip) or ip
-            except Exception as e:
-                print(f"[UDP] Device DB Error ({ip}): {e}")
+            except Exception as exc:
+                print(f"[Device] Device DB Error ({ip}): {exc}")
                 device_name = ip
+        return device_name
 
+    def _mark_device_online(self, ip):
+        now = datetime.datetime.now()
+        self.devices[ip] = now
+        time_str = now.strftime("%H:%M:%S")
+        device_name = self._device_name_for_ip(ip)
         self.device_updated.emit(ip, time_str, "在线", device_name)
 
-        # Protocol Parsing + Deduplication
+    def parse_packet(self, data, ip, protocol="udp"):
+        self._mark_device_online(ip)
+
         try:
             parsed = parse_udp_packet(data)
-        except ValueError as e:
-            print(f"[UDP] Parse Error from {ip}: {e}")
-            self._set_status(AlertLevel.WARNING, "udp parse warning", str(e))
+        except ValueError as exc:
+            print(f"[{protocol.upper()}] Parse Error from {ip}: {exc}")
+            self._set_status(protocol, AlertLevel.WARNING, f"{protocol} parse warning", str(exc))
             return
 
         seq_id = parsed.sequence_id
 
         try:
-            # Key for deduplication: (IP, Sequence)
-            dedup_key = (ip, seq_id)
+            dedup_key = (ip, protocol, seq_id)
             packet_time = datetime.datetime.now()
 
-            # Cleanup old history (older than 10 seconds)
             cutoff = packet_time - datetime.timedelta(seconds=10)
             to_remove = [k for k, t in self.packet_history.items() if t < cutoff]
-            for k in to_remove:
-                del self.packet_history[k]
+            for key in to_remove:
+                del self.packet_history[key]
 
             if dedup_key in self.packet_history:
-                print(f"[UDP] Dropping duplicate packet from {ip} (Seq: {seq_id})")
+                print(f"[{protocol.upper()}] Dropping duplicate packet from {ip} (Seq: {seq_id})")
                 return
 
             self.packet_history[dedup_key] = packet_time
-        except Exception as e:
-            print(f"[UDP] Dedup Error: {e}")
+        except Exception as exc:
+            print(f"[{protocol.upper()}] Dedup Error: {exc}")
 
         card_id_str = parsed.card_id
-        print(f"[UDP] Received Card ID: {card_id_str} from {ip} Seq:{seq_id}")
-        self._set_status(AlertLevel.OK, "udp packet parsed", f"seq={seq_id}")
+        print(f"[{protocol.upper()}] Received Card ID: {card_id_str} from {ip} Seq:{seq_id}")
+        self._set_status(protocol, AlertLevel.OK, f"{protocol} packet parsed", f"seq={seq_id}")
         self.card_swiped.emit(card_id_str, ip)
 
     def check_offline_devices(self):
         now = datetime.datetime.now()
         for ip, last_seen in list(self.devices.items()):
             delta = (now - last_seen).total_seconds()
-            
+
             device_name = ip
             if self.db:
                 device_name = self.db.get_device_name(ip)
 
-            if delta > 300: # 5 minutes clear
+            if delta > 300:
                 del self.devices[ip]
-                # self.device_updated.emit(ip, "N/A", "移除", device_name) 
-            elif delta > 60: # 1 minute offline
+            elif delta > 60:
                 time_str = last_seen.strftime("%H:%M:%S")
                 self.device_updated.emit(ip, time_str, "离线", device_name)
+
+        if self.tcp_server is not None and self.tcp_server.isListening():
+            self._set_status("tcp", AlertLevel.OK, "tcp listening", f"port={self.port}")
+        elif self.tcp_server is not None:
+            self._set_status("tcp", AlertLevel.WARNING, "tcp stopped", f"port={self.port}")
+

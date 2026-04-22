@@ -1,16 +1,20 @@
 import unittest
 
-from src.services.udp_parser import parse_udp_packet
+from src.services.udp_parser import extract_tcp_packets, parse_udp_packet
 
 
 class UDPParserTests(unittest.TestCase):
-    def test_valid_packet_parses_sequence_and_card(self):
+    def _make_packet(self, sequence_id=17, card_id=123456789):
         packet = bytearray(22)
         packet[0] = 0xC1
-        packet[7] = 17
-        packet[10:14] = (123456789).to_bytes(4, byteorder="little")
+        packet[7] = sequence_id
+        packet[10:14] = int(card_id).to_bytes(4, byteorder="little")
+        return bytes(packet)
 
-        parsed = parse_udp_packet(bytes(packet))
+    def test_valid_packet_parses_sequence_and_card(self):
+        packet = self._make_packet()
+
+        parsed = parse_udp_packet(packet)
 
         self.assertEqual(parsed.sequence_id, 17)
         self.assertEqual(parsed.card_id, "123456789")
@@ -28,6 +32,31 @@ class UDPParserTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             parse_udp_packet(bytes(packet))
+
+    def test_extract_tcp_packets_splits_multiple_frames(self):
+        packet1 = self._make_packet(sequence_id=1, card_id=111)
+        packet2 = self._make_packet(sequence_id=2, card_id=222)
+
+        packets, pending = extract_tcp_packets(packet1 + packet2)
+
+        self.assertEqual(packets, [packet1, packet2])
+        self.assertEqual(bytes(pending), b"")
+
+    def test_extract_tcp_packets_keeps_partial_tail(self):
+        packet = self._make_packet(sequence_id=3, card_id=333)
+
+        packets, pending = extract_tcp_packets(packet + packet[:8])
+
+        self.assertEqual(packets, [packet])
+        self.assertEqual(bytes(pending), packet[:8])
+
+    def test_extract_tcp_packets_resyncs_after_noise(self):
+        packet = self._make_packet(sequence_id=4, card_id=444)
+
+        packets, pending = extract_tcp_packets(b"\x00\x01\x02" + packet)
+
+        self.assertEqual(packets, [packet])
+        self.assertEqual(bytes(pending), b"")
 
 
 if __name__ == "__main__":

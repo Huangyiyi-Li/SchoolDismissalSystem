@@ -50,10 +50,10 @@ class SettingsDialog(QDialog):
         self.school_id_edit.setPlaceholderText("请输入学校ID (如 40125)")
         form_layout.addRow("学校 ID:", self.school_id_edit)
         
-        # UDP Port
+        # Ingress Port
         self.port_edit = QLineEdit()
         self.port_edit.setText(str(self.config.get("udp_port", 39169)))
-        form_layout.addRow("UDP 端口:", self.port_edit)
+        form_layout.addRow("接收端口:", self.port_edit)
 
         layout.addLayout(form_layout)
 
@@ -123,7 +123,7 @@ class SettingsDialog(QDialog):
         try:
             port = int(port_str)
         except ValueError:
-            QMessageBox.warning(self, "错误", "UDP 端口必须是数字")
+            QMessageBox.warning(self, "错误", "接收端口必须是数字")
             return
 
         # Check if School ID changed
