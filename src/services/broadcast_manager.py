@@ -142,16 +142,20 @@ class BroadcastManager(QObject):
         )
 
     def process_swipe(self, card_id, ip):
+        started = time.perf_counter()
         now = datetime.datetime.now()
 
         # 1. Lookup Class (FIRST)
+        lookup_started = time.perf_counter()
         class_info = self.db.get_class_info_by_card(card_id)
+        lookup_finished = time.perf_counter()
         class_name = class_info[0]
         class_id = class_info[1]
         window_sig = self.get_current_window_signature(now=now)
         if window_sig:
             print(f"[Debug] Current Window: {window_sig}")
 
+        decision_started = time.perf_counter()
         decision = evaluate_swipe(
             class_name=class_name,
             class_id=class_id,
@@ -165,11 +169,16 @@ class BroadcastManager(QObject):
             test_mode=self.config.get("test_mode", False),
             api_service_available=self.api_service is not None,
         )
+        decision_finished = time.perf_counter()
 
+        tts_queue_ms = 0.0
         if decision.should_voice and class_name:
+            tts_started = time.perf_counter()
             self.tts_worker.add_text(decision.voice_text)
             self.voice_history[class_name] = window_sig or ""
+            tts_queue_ms = (time.perf_counter() - tts_started) * 1000.0
 
+        api_dispatch_ms = 0.0
         if decision.should_push_api and self.api_service and class_id:
             import threading
 
@@ -177,17 +186,35 @@ class BroadcastManager(QObject):
                 print(f"[Debug] Spawning API Push Thread for Class {class_id}")
                 self.api_service.push_dismissal_notice(class_id, card_id, 1)
 
+            api_started = time.perf_counter()
             threading.Thread(target=push_api, daemon=True).start()
             self.api_push_history[card_id] = now
+            api_dispatch_ms = (time.perf_counter() - api_started) * 1000.0
 
         # Log Result
         print(f"[Debug] Process Result: {decision.action} - {decision.reason}")
+        log_started = time.perf_counter()
         self._log_event(card_id, class_name or "未知", decision.action, decision.reason)
+        log_ms = (time.perf_counter() - log_started) * 1000.0
 
         if decision.action == "跳过" and decision.reason == "无效卡号":
             self._set_status(AlertLevel.WARNING, "invalid card", card_id)
         else:
             self._set_status(AlertLevel.OK, "swipe processed", decision.action)
+        logging.getLogger(__name__).info(
+            "Swipe pipeline ip=%s card_id=%s class=%s lookup_ms=%.1f decision_ms=%.1f tts_queue_ms=%.1f api_dispatch_ms=%.1f log_ms=%.1f total_ms=%.1f action=%s reason=%s",
+            ip,
+            card_id,
+            class_name or "未知",
+            (lookup_finished - lookup_started) * 1000.0,
+            (decision_finished - decision_started) * 1000.0,
+            tts_queue_ms,
+            api_dispatch_ms,
+            log_ms,
+            (time.perf_counter() - started) * 1000.0,
+            decision.action,
+            decision.reason,
+        )
 
     @pyqtSlot(str)
     def _handle_tts_success(self, text):
@@ -202,24 +229,41 @@ class BroadcastManager(QObject):
         return self.get_current_window_signature() is not None
 
     def _log_event(self, card_id, class_name, action, reason):
+        started = time.perf_counter()
         # DB: Combine for backward compatibility
         full_status = f"{action} ({reason})" if reason else action
+        db_started = time.perf_counter()
         self.db.log_swipe(card_id, class_name, full_status)
+        db_ms = (time.perf_counter() - db_started) * 1000.0
         
         now = datetime.datetime.now()
         now_str = now.strftime("%H:%M:%S")
         date_str = now.strftime("%Y-%m-%d")
         
         # Emit Signal for UI
+        ui_started = time.perf_counter()
         self.log_updated.emit(now_str, card_id, class_name, action, reason)
+        ui_ms = (time.perf_counter() - ui_started) * 1000.0
         
         # File Logging
+        file_ms = 0.0
         try:
+            file_started = time.perf_counter()
             log_file = os.path.join(self.log_dir, f"{date_str}.txt")
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(f"[{now_str}] [Card:{card_id}] [Class:{class_name}] [{action}] [{reason}]\n")
+            file_ms = (time.perf_counter() - file_started) * 1000.0
         except Exception as e:
             print(f"[Log] File Write Error: {e}")
+        logging.getLogger(__name__).info(
+            "Swipe log persisted card_id=%s class=%s db_ms=%.1f ui_emit_ms=%.1f file_ms=%.1f total_ms=%.1f",
+            card_id,
+            class_name,
+            db_ms,
+            ui_ms,
+            file_ms,
+            (time.perf_counter() - started) * 1000.0,
+        )
 
     def cleanup(self):
         self.tts_worker.stop()

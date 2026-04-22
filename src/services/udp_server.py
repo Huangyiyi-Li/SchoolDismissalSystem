@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtNetwork import QAbstractSocket, QHostAddress, QTcpServer, QTcpSocket, QUdpSocket
@@ -29,6 +30,8 @@ class UDPServerService(QObject):
         self.tcp_buffers: dict[int, bytearray] = {}
         self.tcp_packet_counts: dict[int, int] = {}
         self.tcp_connected_ips: set[str] = set()
+        self.tcp_connected_at: dict[int, float] = {}
+        self.tcp_first_chunk_logged: set[int] = set()
         self.devices = {}  # {ip: last_seen_datetime}
         self.packet_history = {}
 
@@ -102,6 +105,7 @@ class UDPServerService(QObject):
             self.tcp_clients[client_id] = client
             self.tcp_buffers[client_id] = bytearray()
             self.tcp_packet_counts[client_id] = 0
+            self.tcp_connected_at[client_id] = time.perf_counter()
             try:
                 client.setSocketOption(QAbstractSocket.SocketOption.KeepAliveOption, 1)
                 client.setSocketOption(QAbstractSocket.SocketOption.LowDelayOption, 1)
@@ -125,6 +129,17 @@ class UDPServerService(QObject):
         chunk = bytes(client.readAll())
         if not chunk:
             return
+
+        if client_id not in self.tcp_first_chunk_logged:
+            connected_at = self.tcp_connected_at.get(client_id)
+            if connected_at is not None:
+                LOGGER.info(
+                    "TCP first payload latency ip=%s delay_ms=%.1f bytes=%s",
+                    peer_ip,
+                    (time.perf_counter() - connected_at) * 1000.0,
+                    len(chunk),
+                )
+            self.tcp_first_chunk_logged.add(client_id)
 
         LOGGER.debug(
             "TCP reader chunk from %s: %s bytes hex=%s ascii=%s",
@@ -159,6 +174,8 @@ class UDPServerService(QObject):
         client = self.tcp_clients.pop(client_id, None)
         pending = self.tcp_buffers.pop(client_id, bytearray())
         packet_count = self.tcp_packet_counts.pop(client_id, 0)
+        self.tcp_connected_at.pop(client_id, None)
+        self.tcp_first_chunk_logged.discard(client_id)
         if client is None:
             return
 
@@ -231,6 +248,7 @@ class UDPServerService(QObject):
         return len(online_ips)
 
     def parse_packet(self, data, ip, protocol="udp"):
+        started = time.perf_counter()
         self._mark_device_online(ip)
 
         try:
@@ -262,9 +280,20 @@ class UDPServerService(QObject):
         card_id_str = parsed.card_id
         print(f"[{protocol.upper()}] Received Card ID: {card_id_str} from {ip} Seq:{seq_id}")
         self._set_status(protocol, AlertLevel.OK, f"{protocol} packet parsed", f"seq={seq_id}")
+        emit_started = time.perf_counter()
         self.card_swiped.emit(card_id_str, ip)
+        LOGGER.info(
+            "Reader packet processed protocol=%s ip=%s card_id=%s parse_ms=%.1f emit_ms=%.1f total_ms=%.1f",
+            protocol,
+            ip,
+            card_id_str,
+            (emit_started - started) * 1000.0,
+            (time.perf_counter() - emit_started) * 1000.0,
+            (time.perf_counter() - started) * 1000.0,
+        )
 
     def parse_card_id(self, card_id, ip, protocol="tcp-text"):
+        started = time.perf_counter()
         self._mark_device_online(ip)
         normalized_card_id = str(card_id).strip()
         if not normalized_card_id or not normalized_card_id.isdigit():
@@ -274,7 +303,17 @@ class UDPServerService(QObject):
 
         print(f"[{protocol.upper()}] Received Card ID: {normalized_card_id} from {ip}")
         self._set_status(protocol, AlertLevel.OK, f"{protocol} card parsed", normalized_card_id)
+        emit_started = time.perf_counter()
         self.card_swiped.emit(normalized_card_id, ip)
+        LOGGER.info(
+            "Reader card processed protocol=%s ip=%s card_id=%s normalize_ms=%.1f emit_ms=%.1f total_ms=%.1f",
+            protocol,
+            ip,
+            normalized_card_id,
+            (emit_started - started) * 1000.0,
+            (time.perf_counter() - emit_started) * 1000.0,
+            (time.perf_counter() - started) * 1000.0,
+        )
 
     def check_offline_devices(self):
         now = datetime.datetime.now()
