@@ -16,8 +16,8 @@ class _FakeBackend:
         self.last_apply_request = None
         self.last_discover_request = None
 
-    def discover_devices(self, listen_port, command_port):
-        self.last_discover_request = (listen_port, command_port)
+    def discover_devices(self, listen_port, command_port, exclude_paths=None):
+        self.last_discover_request = (listen_port, command_port, list(exclude_paths or []))
         return []
 
     def read_profile(self, *, current_ip, current_port, device_path):
@@ -111,7 +111,15 @@ class DeviceNetworkServiceTests(unittest.TestCase):
 
         service.discover_devices()
 
-        self.assertEqual(backend.last_discover_request, (51006, 1000))
+        self.assertEqual(backend.last_discover_request, (51006, 1000, []))
+
+    def test_device_network_service_passes_excluded_paths(self):
+        backend = _FakeBackend()
+        service = DeviceNetworkService(_FakeConfig(), backend=backend)
+
+        service.discover_devices(exclude_paths=["192.168.1.80:1000"])
+
+        self.assertEqual(backend.last_discover_request, (51006, 1000, ["192.168.1.80:1000"]))
 
 
 if __name__ == "__main__":

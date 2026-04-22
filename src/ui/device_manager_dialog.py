@@ -102,14 +102,10 @@ class DeviceManagerDialog(QDialog):
         self._touch_parent()
 
         current_row = self.table.currentRow()
-        if current_row < 0:
-            QMessageBox.warning(self, "提示", "请先选择一个设备")
-            return
-
         from .device_network_dialog import DeviceNetworkDialog
 
-        current_ip = self.table.item(current_row, 0).text()
-        current_name = self.table.item(current_row, 1).text()
+        current_ip = self.table.item(current_row, 0).text() if current_row >= 0 else ""
+        current_name = self.table.item(current_row, 1).text() if current_row >= 0 else "未检测设备"
         devices = self.db.get_devices()
         occupied_ips = [ip for ip, _, _ in devices if ip]
 

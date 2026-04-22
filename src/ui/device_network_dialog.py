@@ -37,7 +37,8 @@ class DeviceNetworkDialog(QDialog):
         self.current_name = current_name or current_ip or "设备"
         self.current_ip = current_ip
         self.occupied_ips = occupied_ips or []
-        self._discovered_paths: list[str] = []
+        self._baseline_paths: list[str] = []
+        self._baseline_recorded = False
 
         self.setWindowTitle(f"配置刷卡器网络 - {self.current_name}")
         self.resize(640, 520)
@@ -61,7 +62,7 @@ class DeviceNetworkDialog(QDialog):
 
         intro = QLabel(
             "支持自动生成固定网络参数，也支持手动写入学校指定 IP。"
-            "当前通过厂家 Windows SDK 接入，可配置本地 IP、子网掩码、网关、目标主机 IP 和端口。"
+            "如果刷卡器还没出现在设备列表里，也可以直接从这里开始查找或手动输入当前 IP。"
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -82,10 +83,27 @@ class DeviceNetworkDialog(QDialog):
         self.discovery_combo.currentIndexChanged.connect(self._on_discovery_changed)
         source_row.addWidget(self.discovery_combo, 1)
 
-        self.search_btn = QPushButton("搜索 SDK 设备")
-        self.search_btn.clicked.connect(self.search_devices)
-        source_row.addWidget(self.search_btn)
+        self.scan_btn = QPushButton("扫描当前在线刷卡器")
+        self.scan_btn.clicked.connect(self.scan_current_devices)
+        source_row.addWidget(self.scan_btn)
         source_form.addRow("设备来源:", source_row)
+
+        helper_row = QHBoxLayout()
+        self.snapshot_btn = QPushButton("记录当前网络状态")
+        self.snapshot_btn.clicked.connect(self.capture_baseline)
+        helper_row.addWidget(self.snapshot_btn)
+
+        self.new_device_btn = QPushButton("查找新接入刷卡器")
+        self.new_device_btn.clicked.connect(self.find_new_devices)
+        helper_row.addWidget(self.new_device_btn)
+        source_form.addRow("", helper_row)
+
+        self.discovery_hint = QLabel(
+            "建议现场流程: 先记录当前网络状态，再接入新刷卡器，最后点击“查找新接入刷卡器”。"
+        )
+        self.discovery_hint.setWordWrap(True)
+        self.discovery_hint.setProperty("muted", True)
+        source_form.addRow("", self.discovery_hint)
 
         self.current_ip_edit = QLineEdit(self.current_ip)
         self.current_ip_edit.setPlaceholderText("当前设备 IP，例如 192.168.1.80")
@@ -151,7 +169,9 @@ class DeviceNetworkDialog(QDialog):
     def _apply_initial_state(self):
         if not self.network_service.is_available:
             self.notice_label.setText(self.network_service.availability_reason or "网络配置组件不可用。")
-            self.search_btn.setEnabled(False)
+            self.scan_btn.setEnabled(False)
+            self.snapshot_btn.setEnabled(False)
+            self.new_device_btn.setEnabled(False)
             self.read_btn.setEnabled(False)
             self.apply_btn.setEnabled(False)
         else:
@@ -193,7 +213,40 @@ class DeviceNetworkDialog(QDialog):
         self.server_port_spin.setValue(profile.server_port)
         self.local_port_spin.setValue(profile.local_port)
 
-    def search_devices(self):
+    def _refresh_discovery_combo(self, entries):
+        self.discovery_combo.clear()
+        self.discovery_combo.addItem("手动输入当前设备地址", "")
+        for entry in entries:
+            self.discovery_combo.addItem(entry.label, entry.path)
+
+        if entries:
+            self.discovery_combo.setCurrentIndex(1)
+
+    def capture_baseline(self):
+        if not self._require_parent_access("搜索可配置设备"):
+            self.close()
+            return
+        self._touch_parent()
+        try:
+            entries = self.network_service.discover_devices()
+        except DeviceNetworkError as exc:
+            QMessageBox.warning(self, "记录失败", str(exc))
+            return
+
+        self._baseline_paths = [entry.path for entry in entries]
+        self._baseline_recorded = True
+        self.discovery_hint.setText(
+            f"已记录当前网络状态，当前识别到 {len(entries)} 台刷卡器。"
+            " 现在接入新刷卡器后，点击“查找新接入刷卡器”。"
+        )
+        QMessageBox.information(
+            self,
+            "已记录当前状态",
+            f"当前已确认 {len(entries)} 台刷卡器。\n\n"
+            "请现在接入或上电新的刷卡器，然后点击“查找新接入刷卡器”。",
+        )
+
+    def scan_current_devices(self):
         if not self._require_parent_access("搜索可配置设备"):
             self.close()
             return
@@ -204,20 +257,59 @@ class DeviceNetworkDialog(QDialog):
             QMessageBox.warning(self, "搜索失败", str(exc))
             return
 
-        self.discovery_combo.clear()
-        self.discovery_combo.addItem("手动输入当前设备地址", "")
-        for entry in entries:
-            self.discovery_combo.addItem(entry.label, entry.path)
-
-        if entries:
-            self.discovery_combo.setCurrentIndex(1)
-            QMessageBox.information(self, "搜索完成", f"已发现 {len(entries)} 台可配置设备。")
-        else:
+        self._refresh_discovery_combo(entries)
+        if not entries:
             QMessageBox.information(
                 self,
                 "搜索完成",
-                "没有搜索到 SDK 设备。你仍然可以手动输入当前设备 IP 和端口后继续配置。",
+                "没有发现能直接读取网络配置的刷卡器。\n\n"
+                "你仍然可以手动输入当前设备 IP 和端口继续配置，"
+                "或者先记录当前网络状态，再用“查找新接入刷卡器”缩小范围。",
             )
+            return
+
+        self.discovery_hint.setText(f"已发现 {len(entries)} 台已确认刷卡器。")
+        QMessageBox.information(self, "搜索完成", f"已发现 {len(entries)} 台已确认刷卡器。")
+
+    def find_new_devices(self):
+        if not self._baseline_recorded:
+            self.capture_baseline()
+            return
+
+        if not self._require_parent_access("搜索新接入刷卡器"):
+            self.close()
+            return
+        self._touch_parent()
+        try:
+            entries = self.network_service.discover_devices(exclude_paths=self._baseline_paths)
+        except DeviceNetworkError as exc:
+            QMessageBox.warning(self, "搜索失败", str(exc))
+            return
+
+        self._refresh_discovery_combo(entries)
+        if entries:
+            self.discovery_hint.setText(
+                f"发现 {len(entries)} 台新接入刷卡器候选，列表里只保留了能读取配置的设备。"
+            )
+            QMessageBox.information(
+                self,
+                "发现新设备",
+                f"发现 {len(entries)} 台新接入刷卡器候选。\n\n"
+                "列表里已经过滤掉无法读取网络配置的普通网络设备。",
+            )
+            return
+
+        self.discovery_hint.setText(
+            "没有找到新接入刷卡器。可以重新记录当前网络状态后再试，"
+            "或者直接手动输入刷卡器当前 IP。"
+        )
+        QMessageBox.information(
+            self,
+            "未发现新设备",
+            "没有找到新接入刷卡器。\n\n"
+            "如果设备刚刚接入，请等待几秒再试；"
+            "如果仍然没有结果，可以重新记录当前网络状态，或直接手动输入当前 IP。",
+        )
 
     def read_current_profile(self):
         if not self._require_parent_access("读取设备网络配置"):

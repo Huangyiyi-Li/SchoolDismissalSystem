@@ -26,10 +26,11 @@ class DeviceNetworkError(RuntimeError):
 @dataclass(frozen=True)
 class NetworkDiscoveryEntry:
     path: str
+    label_text: str | None = None
 
     @property
     def label(self) -> str:
-        return self.path
+        return self.label_text or self.path
 
 
 @dataclass(frozen=True)
@@ -211,6 +212,7 @@ class RFProSDKBackend:
         listen_port: int = DEFAULT_DEVICE_DISCOVERY_PORT,
         command_port: int = DEFAULT_DEVICE_COMMAND_PORT,
         timeout_seconds: float = 1.5,
+        exclude_paths: Iterable[str] | None = None,
     ) -> list[NetworkDiscoveryEntry]:
         self._ensure_available()
         status = self._dll.lc_net_serverStart(int(listen_port))
@@ -232,10 +234,10 @@ class RFProSDKBackend:
             self._dll.lc_net_serverExit()
 
         if best_result:
-            return [NetworkDiscoveryEntry(path=item) for item in best_result]
+            return self._verify_discovered_paths(best_result, exclude_paths=exclude_paths)
 
         fallback_paths = self._scan_local_subnet(command_port=int(command_port))
-        return [NetworkDiscoveryEntry(path=item) for item in fallback_paths]
+        return self._verify_discovered_paths(fallback_paths, exclude_paths=exclude_paths)
 
     def read_profile(self, *, current_ip: str | None, current_port: int, device_path: str | None) -> DeviceNetworkProfile:
         handle = self._open_handle(current_ip=current_ip, current_port=current_port, device_path=device_path)
@@ -360,19 +362,75 @@ class RFProSDKBackend:
         verified_endpoints: list[str] = []
         for ip_text in sorted(set(reachable_ips)):
             endpoint = f"{ip_text}:{command_port}"
-            handle = -1
+            if self._probe_reader_profile(endpoint):
+                LOGGER.info("Subnet scan verified reader endpoint=%s", endpoint)
+                verified_endpoints.append(endpoint)
+
+        return verified_endpoints
+
+    def _verify_discovered_paths(
+        self,
+        paths: Iterable[str],
+        *,
+        exclude_paths: Iterable[str] | None = None,
+    ) -> list[NetworkDiscoveryEntry]:
+        normalized_excluded = {path.strip() for path in (exclude_paths or []) if path}
+        verified_entries: list[NetworkDiscoveryEntry] = []
+        seen_paths: set[str] = set()
+
+        for raw_path in paths:
+            path = raw_path.strip()
+            if not path or path in normalized_excluded or path in seen_paths:
+                continue
+
+            profile = self._probe_reader_profile(path)
+            if profile is None:
+                LOGGER.debug("Discarded unverified reader candidate path=%s", path)
+                continue
+
+            seen_paths.add(path)
+            verified_entries.append(
+                NetworkDiscoveryEntry(
+                    path=path,
+                    label_text=f"{path} | 已确认刷卡器，本机IP {profile.local_ip}",
+                )
+            )
+
+        return verified_entries
+
+    def _probe_reader_profile(self, device_path: str) -> DeviceNetworkProfile | None:
+        handle = -1
+        for mode in (5, 4):
             try:
-                for mode in (5, 4):
-                    handle = self._dll.lc_init_ex(mode, endpoint.encode("ascii"), 0)
-                    if handle != -1:
-                        LOGGER.info("Subnet scan verified reader endpoint=%s mode=%s", endpoint, mode)
-                        verified_endpoints.append(endpoint)
-                        break
+                handle = self._dll.lc_init_ex(mode, device_path.encode("ascii"), 0)
+                if handle == -1:
+                    continue
+
+                profile = DeviceNetworkProfile(
+                    local_ip=self._read_ip(handle, self._dll.lc_getNet_local_IP),
+                    subnet_mask=self._read_ip(handle, self._dll.lc_getNet_local_mask),
+                    gateway=self._read_ip(handle, self._dll.lc_getNet_gateway),
+                    server_ip=self._read_ip(handle, self._dll.lc_getNet_serverIP),
+                    server_port=self._read_port(handle, self._dll.lc_getNet_serverPort),
+                    local_port=self._read_port(handle, self._dll.lc_getNet_local_port),
+                )
+                LOGGER.info(
+                    "Verified reader path=%s mode=%s local_ip=%s server=%s:%s",
+                    device_path,
+                    mode,
+                    profile.local_ip,
+                    profile.server_ip,
+                    profile.server_port,
+                )
+                return profile
+            except DeviceNetworkError:
+                LOGGER.debug("Reader verification failed for path=%s mode=%s", device_path, mode, exc_info=True)
             finally:
                 if handle != -1:
                     self._dll.lc_exit(handle)
+                    handle = -1
 
-        return verified_endpoints
+        return None
 
 
 class DeviceNetworkService:
@@ -400,10 +458,11 @@ class DeviceNetworkService:
     def availability_reason(self) -> str:
         return getattr(self.backend, "availability_reason", "")
 
-    def discover_devices(self) -> list[NetworkDiscoveryEntry]:
+    def discover_devices(self, exclude_paths: Iterable[str] | None = None) -> list[NetworkDiscoveryEntry]:
         return self.backend.discover_devices(
             listen_port=self.discovery_port,
             command_port=self.command_port,
+            exclude_paths=exclude_paths,
         )
 
     def read_profile(
