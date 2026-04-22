@@ -181,6 +181,11 @@ class MainWindow(QMainWindow):
             self.enter_guard_mode()
 
     def _online_devices_count(self) -> int:
+        if hasattr(self.udp_server, "count_online_devices"):
+            try:
+                return int(self.udp_server.count_online_devices())
+            except Exception:
+                pass
         devices = getattr(self.udp_server, "devices", None)
         if isinstance(devices, dict):
             now = datetime.datetime.now()

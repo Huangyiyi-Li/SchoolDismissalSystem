@@ -28,6 +28,7 @@ class UDPServerService(QObject):
         self.tcp_clients: dict[int, QTcpSocket] = {}
         self.tcp_buffers: dict[int, bytearray] = {}
         self.tcp_packet_counts: dict[int, int] = {}
+        self.tcp_connected_ips: set[str] = set()
         self.devices = {}  # {ip: last_seen_datetime}
         self.packet_history = {}
 
@@ -86,6 +87,7 @@ class UDPServerService(QObject):
 
         self.tcp_clients.clear()
         self.tcp_buffers.clear()
+        self.tcp_connected_ips.clear()
 
     def process_pending_datagrams(self):
         while self.socket.hasPendingDatagrams():
@@ -100,10 +102,15 @@ class UDPServerService(QObject):
             self.tcp_clients[client_id] = client
             self.tcp_buffers[client_id] = bytearray()
             self.tcp_packet_counts[client_id] = 0
+            try:
+                client.setSocketOption(QAbstractSocket.SocketOption.KeepAliveOption, 1)
+            except Exception:
+                LOGGER.debug("Failed to enable TCP keepalive for reader socket", exc_info=True)
             client.readyRead.connect(lambda cid=client_id: self._read_tcp_client(cid))
             client.disconnected.connect(lambda cid=client_id: self._handle_tcp_disconnect(cid))
             client.errorOccurred.connect(lambda _error, cid=client_id: self._handle_tcp_error(cid))
             peer_ip = self._normalize_ip(client.peerAddress().toString())
+            self._mark_tcp_connected(peer_ip)
             LOGGER.info("Accepted TCP reader connection from %s", peer_ip)
 
     def _read_tcp_client(self, client_id: int):
@@ -162,6 +169,7 @@ class UDPServerService(QObject):
                 len(pending),
                 bytes(pending[:32]).hex(" "),
             )
+        self._mark_tcp_disconnected(peer_ip)
         LOGGER.info("TCP reader disconnected from %s packets=%s", peer_ip, packet_count)
         client.deleteLater()
 
@@ -197,6 +205,29 @@ class UDPServerService(QObject):
         time_str = now.strftime("%H:%M:%S")
         device_name = self._device_name_for_ip(ip)
         self.device_updated.emit(ip, time_str, "在线", device_name)
+
+    def _mark_tcp_connected(self, ip):
+        self.tcp_connected_ips.add(ip)
+        self._mark_device_online(ip)
+
+    def _mark_tcp_disconnected(self, ip):
+        self.tcp_connected_ips.discard(ip)
+        self.devices.pop(ip, None)
+        now = datetime.datetime.now().strftime("%H:%M:%S")
+        device_name = self.db.get_device_name(ip) if self.db else ip
+        self.device_updated.emit(ip, now, "离线", device_name)
+
+    def count_online_devices(self, now=None):
+        now = now or datetime.datetime.now()
+        online_ips = set(self.tcp_connected_ips)
+        online_ips.update(
+            ip
+            for ip, last_seen in self.devices.items()
+            if ip not in self.tcp_connected_ips
+            and isinstance(last_seen, datetime.datetime)
+            and (now - last_seen).total_seconds() <= 60
+        )
+        return len(online_ips)
 
     def parse_packet(self, data, ip, protocol="udp"):
         self._mark_device_online(ip)
@@ -247,6 +278,8 @@ class UDPServerService(QObject):
     def check_offline_devices(self):
         now = datetime.datetime.now()
         for ip, last_seen in list(self.devices.items()):
+            if ip in self.tcp_connected_ips:
+                continue
             delta = (now - last_seen).total_seconds()
 
             device_name = ip
