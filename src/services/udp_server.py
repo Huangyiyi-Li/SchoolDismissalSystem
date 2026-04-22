@@ -27,6 +27,7 @@ class UDPServerService(QObject):
         self.tcp_server = None
         self.tcp_clients: dict[int, QTcpSocket] = {}
         self.tcp_buffers: dict[int, bytearray] = {}
+        self.tcp_packet_counts: dict[int, int] = {}
         self.devices = {}  # {ip: last_seen_datetime}
         self.packet_history = {}
 
@@ -98,6 +99,7 @@ class UDPServerService(QObject):
             client_id = id(client)
             self.tcp_clients[client_id] = client
             self.tcp_buffers[client_id] = bytearray()
+            self.tcp_packet_counts[client_id] = 0
             client.readyRead.connect(lambda cid=client_id: self._read_tcp_client(cid))
             client.disconnected.connect(lambda cid=client_id: self._handle_tcp_disconnect(cid))
             client.errorOccurred.connect(lambda _error, cid=client_id: self._handle_tcp_error(cid))
@@ -116,22 +118,46 @@ class UDPServerService(QObject):
         if not chunk:
             return
 
+        LOGGER.info(
+            "TCP reader chunk from %s: %s bytes hex=%s ascii=%s",
+            peer_ip,
+            len(chunk),
+            chunk[:32].hex(" "),
+            "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk[:32]),
+        )
+
         buffer = self.tcp_buffers.setdefault(client_id, bytearray())
         buffer.extend(chunk)
         packets, pending = extract_tcp_packets(buffer)
         self.tcp_buffers[client_id] = pending
 
+        if not packets:
+            LOGGER.info(
+                "TCP reader chunk from %s did not form a complete packet yet; buffered=%s bytes",
+                peer_ip,
+                len(pending),
+            )
+
         for packet in packets:
+            self.tcp_packet_counts[client_id] = self.tcp_packet_counts.get(client_id, 0) + 1
             self.parse_packet(packet, peer_ip, protocol="tcp")
 
     def _handle_tcp_disconnect(self, client_id: int):
         client = self.tcp_clients.pop(client_id, None)
-        self.tcp_buffers.pop(client_id, None)
+        pending = self.tcp_buffers.pop(client_id, bytearray())
+        packet_count = self.tcp_packet_counts.pop(client_id, 0)
         if client is None:
             return
 
         peer_ip = self._normalize_ip(client.peerAddress().toString())
-        LOGGER.info("TCP reader disconnected from %s", peer_ip)
+        if pending:
+            LOGGER.warning(
+                "TCP reader disconnected from %s with %s buffered bytes left hex=%s",
+                peer_ip,
+                len(pending),
+                bytes(pending[:32]).hex(" "),
+            )
+        LOGGER.info("TCP reader disconnected from %s packets=%s", peer_ip, packet_count)
         client.deleteLater()
 
     def _handle_tcp_error(self, client_id: int):
@@ -220,4 +246,3 @@ class UDPServerService(QObject):
             self._set_status("tcp", AlertLevel.OK, "tcp listening", f"port={self.port}")
         elif self.tcp_server is not None:
             self._set_status("tcp", AlertLevel.WARNING, "tcp stopped", f"port={self.port}")
-
