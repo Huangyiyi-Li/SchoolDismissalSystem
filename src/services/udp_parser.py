@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 PACKET_LENGTH = 22
 PACKET_HEADER = 0xC1
+ASCII_CARD_BYTES = set(b"0123456789\r\n")
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,12 @@ def extract_tcp_packets(buffer: bytes | bytearray) -> tuple[list[bytes], bytearr
         if pending[0] != PACKET_HEADER:
             header_index = pending.find(bytes([PACKET_HEADER]), 1)
             if header_index == -1:
+                # Preserve plain ASCII card streams such as "3651603617\\r\\n".
+                # TCP is a stream, so multiple card lines can be coalesced into a
+                # single read larger than PACKET_LENGTH; truncating here would drop
+                # the leading digits and produce false card ids.
+                if pending and all(byte in ASCII_CARD_BYTES for byte in pending):
+                    break
                 pending = pending[-(PACKET_LENGTH - 1):]
                 break
             del pending[:header_index]

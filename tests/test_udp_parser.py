@@ -70,6 +70,16 @@ class UDPParserTests(unittest.TestCase):
         self.assertEqual(card_ids, ["3655451601"])
         self.assertEqual(bytes(pending), b"12345")
 
+    def test_extract_tcp_packets_does_not_truncate_ascii_card_streams(self):
+        buffer = b"3651603617\r\n3651603617\r\n"
+
+        packets, pending = extract_tcp_packets(buffer)
+        card_ids, remainder = extract_ascii_card_lines(pending)
+
+        self.assertEqual(packets, [])
+        self.assertEqual(card_ids, ["3651603617", "3651603617"])
+        self.assertEqual(bytes(remainder), b"")
+
 
 if __name__ == "__main__":
     unittest.main()
