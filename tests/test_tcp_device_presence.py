@@ -31,7 +31,7 @@ class TCPDevicePresenceTests(unittest.TestCase):
         service.check_offline_devices()
 
         self.assertEqual(service.count_online_devices(), 1)
-        self.assertIn("192.168.199.66", service.tcp_connected_ips)
+        self.assertIn("192.168.199.66", service.tcp_connection_counts)
 
     def test_tcp_disconnect_marks_device_offline_immediately(self):
         service = UDPServerService(db_manager=_FakeDB())
@@ -40,8 +40,18 @@ class TCPDevicePresenceTests(unittest.TestCase):
         service._mark_tcp_disconnected("192.168.199.66")
 
         self.assertEqual(service.count_online_devices(), 0)
-        self.assertNotIn("192.168.199.66", service.tcp_connected_ips)
+        self.assertNotIn("192.168.199.66", service.tcp_connection_counts)
         self.assertNotIn("192.168.199.66", service.devices)
+
+    def test_one_of_multiple_connections_does_not_mark_ip_offline(self):
+        service = UDPServerService(db_manager=_FakeDB())
+        service._mark_tcp_connected("192.168.199.66")
+        service._mark_tcp_connected("192.168.199.66")
+
+        service._mark_tcp_disconnected("192.168.199.66")
+
+        self.assertEqual(service.count_online_devices(), 1)
+        self.assertIn("192.168.199.66", service.tcp_connection_counts)
 
 
 if __name__ == "__main__":

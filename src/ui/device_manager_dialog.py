@@ -3,14 +3,11 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QInputDialog, QLineEdit)
 from PyQt6.QtCore import Qt
 
-from ..services.device_network_service import DeviceNetworkService
-
 class DeviceManagerDialog(QDialog):
     def __init__(self, db_manager, config_manager=None, parent=None):
         super().__init__(parent)
         self.db = db_manager
         self.config = config_manager
-        self.network_service = DeviceNetworkService(config_manager)
         self.setWindowTitle("设备管理")
         self.resize(600, 400)
         self.setup_ui()
@@ -45,10 +42,6 @@ class DeviceManagerDialog(QDialog):
         edit_btn = QPushButton("修改名称")
         edit_btn.clicked.connect(self.edit_device_name)
         btn_layout.addWidget(edit_btn)
-
-        network_btn = QPushButton("配置网络")
-        network_btn.clicked.connect(self.configure_device_network)
-        btn_layout.addWidget(network_btn)
 
         refresh_btn = QPushButton("刷新列表")
         refresh_btn.clicked.connect(self.load_data)
@@ -94,26 +87,3 @@ class DeviceManagerDialog(QDialog):
                 self.load_data()
             else:
                 QMessageBox.critical(self, "错误", "保存失败")
-
-    def configure_device_network(self):
-        if not self._require_parent_access("配置设备网络"):
-            self.close()
-            return
-        self._touch_parent()
-
-        current_row = self.table.currentRow()
-        from .device_network_dialog import DeviceNetworkDialog
-
-        current_ip = self.table.item(current_row, 0).text() if current_row >= 0 else ""
-        current_name = self.table.item(current_row, 1).text() if current_row >= 0 else "未检测设备"
-        devices = self.db.get_devices()
-        occupied_ips = [ip for ip, _, _ in devices if ip]
-
-        dialog = DeviceNetworkDialog(
-            self.network_service,
-            current_ip=current_ip,
-            current_name=current_name,
-            occupied_ips=occupied_ips,
-            parent=self,
-        )
-        dialog.exec()
