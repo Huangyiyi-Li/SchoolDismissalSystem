@@ -1,6 +1,11 @@
 import unittest
 
-from src.services.udp_parser import extract_ascii_card_lines, extract_tcp_packets, parse_udp_packet
+from src.services.udp_parser import (
+    extract_ascii_card_lines,
+    extract_ascii_card_payloads,
+    extract_tcp_packets,
+    parse_udp_packet,
+)
 
 
 class UDPParserTests(unittest.TestCase):
@@ -79,6 +84,21 @@ class UDPParserTests(unittest.TestCase):
         self.assertEqual(packets, [])
         self.assertEqual(card_ids, ["3651603617", "3651603617"])
         self.assertEqual(bytes(remainder), b"")
+
+    def test_extract_ascii_card_payloads_reads_udp_ascii_card_id(self):
+        card_ids = extract_ascii_card_payloads(b"3655451601\r\n")
+
+        self.assertEqual(card_ids, ["3655451601"])
+
+    def test_extract_ascii_card_payloads_accepts_bare_ascii_card_id(self):
+        card_ids = extract_ascii_card_payloads(b"3655451601")
+
+        self.assertEqual(card_ids, ["3655451601"])
+
+    def test_extract_ascii_card_payloads_ignores_non_ascii_payload(self):
+        card_ids = extract_ascii_card_payloads(b"\xc1\x00\x01\x02")
+
+        self.assertEqual(card_ids, [])
 
 
 if __name__ == "__main__":

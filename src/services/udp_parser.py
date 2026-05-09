@@ -77,3 +77,22 @@ def extract_ascii_card_lines(buffer: bytes | bytearray) -> tuple[list[str], byte
             card_ids.append(decoded)
 
     return card_ids, pending
+
+
+def extract_ascii_card_payloads(buffer: bytes | bytearray) -> list[str]:
+    card_ids: list[str] = []
+
+    for raw_line in bytes(buffer).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        try:
+            decoded = line.decode("ascii")
+        except UnicodeDecodeError:
+            continue
+
+        if decoded.isdigit():
+            card_ids.append(decoded)
+
+    return card_ids

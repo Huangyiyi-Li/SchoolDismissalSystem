@@ -8,7 +8,14 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtNetwork import QAbstractSocket, QHostAddress, QTcpServer, QTcpSocket, QUdpSocket
 
 from .system_status import AlertLevel, RuntimeStatusStore, ServiceState
-from .udp_parser import extract_ascii_card_lines, extract_tcp_packets, parse_udp_packet
+from .udp_parser import (
+    PACKET_HEADER,
+    PACKET_LENGTH,
+    extract_ascii_card_lines,
+    extract_ascii_card_payloads,
+    extract_tcp_packets,
+    parse_udp_packet,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -100,7 +107,24 @@ class UDPServerService(QObject):
         while self.socket.hasPendingDatagrams():
             datagram, host, _port = self.socket.readDatagram(self.socket.pendingDatagramSize())
             ip = self._normalize_ip(host.toString())
-            self.parse_packet(datagram, ip, protocol="udp")
+            if len(datagram) == PACKET_LENGTH and datagram[:1] == bytes([PACKET_HEADER]):
+                self.parse_packet(datagram, ip, protocol="udp")
+                continue
+
+            ascii_card_ids = extract_ascii_card_payloads(datagram)
+            if ascii_card_ids:
+                for card_id in ascii_card_ids:
+                    self.parse_card_id(card_id, ip, protocol="udp-text")
+                continue
+
+            LOGGER.warning(
+                "UDP parse error from %s: invalid packet length=%s hex=%s ascii=%s",
+                ip,
+                len(datagram),
+                datagram[:32].hex(" "),
+                "".join(chr(b) if 32 <= b <= 126 else "." for b in datagram[:32]),
+            )
+            self._set_status("udp", AlertLevel.WARNING, "udp parse warning", f"invalid packet length: {len(datagram)}")
 
     def _accept_tcp_connections(self):
         while self.tcp_server.hasPendingConnections():
