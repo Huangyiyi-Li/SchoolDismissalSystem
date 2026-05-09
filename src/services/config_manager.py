@@ -8,7 +8,14 @@ class ConfigManager:
         "time_window_start": "16:30",
         "time_window_end": "18:30",
         "broadcast_count": 3,
-        "deduplication_interval_seconds": 300
+        "tts_rate": 160,
+        "tts_volume": 1.0,
+        "deduplication_interval_seconds": 300,
+        "device_network_command_port": 1000,
+        "device_network_discovery_port": 51006,
+        "test_mode": False,
+        "maintenance_pin": "1234",
+        "maintenance_timeout_seconds": 300,
     }
 
     def __new__(cls, config_path=None):

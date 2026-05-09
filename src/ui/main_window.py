@@ -1,371 +1,310 @@
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QGroupBox, QTableWidget, QTableWidgetItem, QListWidget, 
-                             QLabel, QHeaderView, QToolBar)
-from PyQt6.QtGui import QAction, QColor
-from PyQt6.QtCore import Qt, QTimer
-# Fix import paths assuming running from project root or having src in pythonpath
-# For robustness in simple script execution, we might need sys.path hacks in main
-from .mapping_dialog import MappingDialog
+from __future__ import annotations
+
+import datetime
+
+from PyQt6.QtCore import QTimer
+from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtWidgets import (
+    QInputDialog,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QStackedWidget,
+    QWidget,
+    QVBoxLayout,
+)
+
+from src.services.dismissal_window import format_window_label
+from src.services.system_status import RuntimeStatusStore
+from .dashboard_presenter import DashboardPresenter
+from .dashboard_view import DashboardView
+from .maintenance_panel import MaintenancePanel
+from .maintenance_session import MaintenanceSessionController
+
 
 class MainWindow(QMainWindow):
-    def __init__(self, config_manager, db_manager, broadcast_manager, udp_server, data_sync_service=None):
+    def __init__(
+        self,
+        config_manager,
+        db_manager,
+        broadcast_manager,
+        udp_server,
+        data_sync_service=None,
+        status_store=None,
+    ):
         super().__init__()
         self.config = config_manager
         self.db = db_manager
         self.broadcast_manager = broadcast_manager
         self.udp_server = udp_server
         self.data_sync_service = data_sync_service
-        
-        self.setWindowTitle("校园放学语音播报系统")
-        self.resize(1024, 768)
-        
-        self.setup_ui()
-        self.connect_signals()
-        
-        # Initial logs load
+        self.status_store = (
+            status_store
+            or getattr(self.broadcast_manager, "status_store", None)
+            or RuntimeStatusStore()
+        )
+
+        self.presenter = DashboardPresenter()
+        self.maintenance_session = MaintenanceSessionController(
+            pin=self.config.get("maintenance_pin", "1234"),
+            timeout_seconds=self.config.get("maintenance_timeout_seconds", 300),
+        )
+        self.current_mode = "guard"
+        self._device_status_map: dict[str, str] = {}
+
+        self.setWindowTitle("校园放学守护看板")
+        self.resize(1200, 800)
+
+        self._setup_ui()
+        self._apply_window_styles()
+        self._connect_signals()
+        self._setup_shortcuts()
+        self._setup_timers()
+
         self.load_recent_logs()
-        
-        # Start timer to refresh time display
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_status_bar)
-        self.timer.start(1000)
+        self.enter_guard_mode()
+        self._refresh_dashboard()
 
-        # Apply Modern Stylesheet
-        self.apply_styles()
-
-    def apply_styles(self):
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #f0f2f5;
-            }
-            QGroupBox {
-                background-color: white;
-                border: 1px solid #e0e0e0;
-                border-radius: 8px;
-                margin-top: 10px;
-                font-weight: bold;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-            }
-            QTableWidget {
-                border: none;
-                gridline-color: #f0f0f0;
-                selection-background-color: #e6f7ff;
-                selection-color: black;
-            }
-            QHeaderView::section {
-                background-color: #fafafa;
-                padding: 4px;
-                border: none;
-                font-weight: bold;
-            }
-            QListWidget {
-                border: none;
-                font-size: 14px;
-            }
-            QLabel {
-                color: #333;
-            }
-            QToolBar {
-                background-color: white;
-                border-bottom: 1px solid #e0e0e0;
-                spacing: 10px;
-            }
-            QToolButton {
-                padding: 5px;
-                border-radius: 4px;
-            }
-            QToolButton:hover {
-                background-color: #f0f0f0;
-            }
-        """)
-
-    def setup_ui(self):
-        # Menu / Toolbar
-        toolbar = QToolBar("Main")
-        self.addToolBar(toolbar)
-        
-        manage_action = QAction("卡号管理", self)
-        manage_action.triggered.connect(self.open_mapping_dialog)
-        toolbar.addAction(manage_action)
-
-        config_action = QAction("绑定学校", self)
-        config_action.triggered.connect(self.open_settings_dialog)
-        toolbar.addAction(config_action)
-        
-        schedule_action = QAction("放学时间", self)
-        schedule_action.triggered.connect(self.open_schedule_dialog)
-        toolbar.addAction(schedule_action)
-        
-        device_action = QAction("设备管理", self)
-        device_action.triggered.connect(self.open_device_manager)
-        toolbar.addAction(device_action)
-        
-        # Central Widget
+    def _setup_ui(self):
         central = QWidget()
+        central.setObjectName("mainShell")
+        root_layout = QVBoxLayout(central)
+        root_layout.setContentsMargins(0, 0, 0, 0)
         self.setCentralWidget(central)
-        main_layout = QHBoxLayout(central)
 
-        # Left Panel (Status + Devices)
-        left_layout = QVBoxLayout()
-        
-        # Connection Status Group
-        dev_group = QGroupBox("设备状态")
-        dev_layout = QVBoxLayout()
-        self.device_table = QTableWidget()
-        self.device_table.setColumnCount(4)
-        self.device_table.setHorizontalHeaderLabels(["IP地址", "设备名称", "最后通信", "状态"])
-        self.device_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        dev_layout.addWidget(self.device_table)
-        dev_group.setLayout(dev_layout)
-        left_layout.addWidget(dev_group)
-        
-        # Time Window Status
-        status_group = QGroupBox("系统状态")
-        status_layout = QVBoxLayout()
-        window_str = f"{self.config.get('time_window_start')} - {self.config.get('time_window_end')}"
-        self.window_label = QLabel(f"播报时段: {window_str}")
-        self.window_label.setStyleSheet("font-size: 14px; font-weight: bold;")
-        self.status_label = QLabel("当前状态: 初始化...")
-        
-        # Test Mode Checkbox
-        from PyQt6.QtWidgets import QCheckBox
-        self.test_mode_check = QCheckBox("测试模式 (仅播报，不推送)")
-        self.test_mode_check.setChecked(self.config.get("test_mode", False))
-        self.test_mode_check.stateChanged.connect(self.toggle_test_mode)
-        
-        status_layout.addWidget(self.window_label)
-        status_layout.addWidget(self.status_label)
-        status_layout.addWidget(self.test_mode_check)
-        status_group.setLayout(status_layout)
-        left_layout.addWidget(status_group)
-        
-        main_layout.addLayout(left_layout, stretch=1)
+        self.mode_stack = QStackedWidget()
+        root_layout.addWidget(self.mode_stack)
 
-        # Center Panel (Logs) - NOW TAKES FULL WIDTH
-        center_layout = QVBoxLayout()
-        log_group = QGroupBox("实时日志")
-        log_layout = QVBoxLayout()
-        self.log_table = QTableWidget()
-        
-        # Updated Columns: Time, Card, Class, Action, Reason
-        self.log_table.setColumnCount(5)
-        self.log_table.setHorizontalHeaderLabels(["时间", "卡号", "班级", "动作", "详细原因"])
-        self.log_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive) # Allow resize
-        self.log_table.setColumnWidth(0, 100) # Time
-        self.log_table.setColumnWidth(1, 100) # Card
-        self.log_table.setColumnWidth(2, 100) # Class
-        self.log_table.setColumnWidth(3, 120) # Action
-        self.log_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch) # Reason fills rest
-        
-        log_layout.addWidget(self.log_table)
-        log_group.setLayout(log_layout)
-        # Add to main with stretch
-        main_layout.addWidget(log_group, stretch=3)
+        self.dashboard_view = DashboardView(self)
+        self.maintenance_panel = MaintenancePanel(self)
 
-        # Right Panel (Queue) REMOVED as per request
+        self.mode_stack.addWidget(self.dashboard_view)
+        self.mode_stack.addWidget(self.maintenance_panel)
 
-    def connect_signals(self):
-        # UDP Signals
+        self.maintenance_panel.open_settings.connect(self._open_settings_from_maintenance)
+        self.maintenance_panel.open_schedule.connect(self._open_schedule_from_maintenance)
+        self.maintenance_panel.open_device_manager.connect(self._open_device_manager_from_maintenance)
+        self.maintenance_panel.open_mapping.connect(self._open_mapping_from_maintenance)
+        self.maintenance_panel.force_sync.connect(self._force_sync_from_maintenance)
+        self.maintenance_panel.exit_maintenance.connect(self.enter_guard_mode)
+        self.maintenance_panel.test_mode_changed.connect(self._set_test_mode)
+
+    def _apply_window_styles(self):
+        self.setStyleSheet(
+            """
+            QMainWindow {
+                background: #07111d;
+            }
+            QWidget#mainShell {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #07111d, stop:0.55 #091423, stop:1 #0b1930);
+            }
+            QInputDialog, QMessageBox {
+                background: #0d1829;
+                color: #edf5ff;
+            }
+            QInputDialog QLabel, QMessageBox QLabel {
+                color: #edf5ff;
+            }
+            QInputDialog QLineEdit {
+                background: #091423;
+                color: #f8fbff;
+                border: 1px solid #35506d;
+                border-radius: 10px;
+                padding: 4px 10px;
+            }
+            """
+        )
+
+    def _connect_signals(self):
         self.udp_server.card_swiped.connect(self.broadcast_manager.process_swipe)
         self.udp_server.device_updated.connect(self.update_device_status)
-        
-        # Broadcast Signals
         self.broadcast_manager.log_updated.connect(self.add_log)
-        # Assuming we might want to visualize queue later, 
-        # but currently BroadcastManager's worker consumes queue immediately.
-        # We can add a signal in TTSWorker when item starts/ends if strict visualization needed.
+
+    def _setup_shortcuts(self):
+        self._maintenance_shortcut = QShortcut(QKeySequence("Ctrl+Shift+M"), self)
+        self._maintenance_shortcut.activated.connect(self.request_maintenance_mode)
+
+    def _setup_timers(self):
+        self.dashboard_timer = QTimer(self)
+        self.dashboard_timer.timeout.connect(self._refresh_dashboard)
+        self.dashboard_timer.start(1000)
+
+        self.maintenance_relock_timer = QTimer(self)
+        self.maintenance_relock_timer.timeout.connect(self._check_maintenance_timeout)
+        self.maintenance_relock_timer.start(1000)
+
+    def enter_guard_mode(self):
+        self.current_mode = "guard"
+        self.mode_stack.setCurrentWidget(self.dashboard_view)
+
+    def enter_maintenance_mode(self):
+        self.current_mode = "maintenance"
+        self.touch_maintenance_session()
+        self.maintenance_panel.set_test_mode(self.config.get("test_mode", False))
+        self.mode_stack.setCurrentWidget(self.maintenance_panel)
+
+    def request_maintenance_mode(self):
+        if self.maintenance_session.is_unlocked():
+            self.enter_maintenance_mode()
+            return
+
+        attempt, ok = QInputDialog.getText(
+            self,
+            "维护模式",
+            "请输入维护 PIN:",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok:
+            return
+
+        if self.maintenance_session.unlock(attempt):
+            self.enter_maintenance_mode()
+        else:
+            QMessageBox.warning(self, "拒绝访问", "PIN 错误，无法进入维护模式。")
+            self.enter_guard_mode()
+
+    def touch_maintenance_session(self):
+        self.maintenance_session.touch()
+
+    def require_maintenance_access(self, action_label="维护操作", interactive=True):
+        if not self.maintenance_session.is_unlocked():
+            self.enter_guard_mode()
+            if interactive:
+                QMessageBox.warning(self, "维护会话已锁定", f"{action_label}失败：维护会话已过期。")
+            return False
+        self.touch_maintenance_session()
+        return True
+
+    def _check_maintenance_timeout(self):
+        if self.current_mode == "maintenance" and not self.maintenance_session.is_unlocked():
+            self.enter_guard_mode()
+
+    def _online_devices_count(self) -> int:
+        if hasattr(self.udp_server, "count_online_devices"):
+            try:
+                return int(self.udp_server.count_online_devices())
+            except Exception:
+                pass
+        devices = getattr(self.udp_server, "devices", None)
+        if isinstance(devices, dict):
+            now = datetime.datetime.now()
+            return sum(
+                1
+                for last_seen in devices.values()
+                if isinstance(last_seen, datetime.datetime)
+                and (now - last_seen).total_seconds() <= 60
+            )
+        return sum(1 for status in self._device_status_map.values() if status == "在线")
+
+    def _refresh_dashboard(self):
+        if hasattr(self.udp_server, "check_offline_devices"):
+            try:
+                self.udp_server.check_offline_devices()
+            except Exception:
+                pass
+
+        snapshot = self.status_store.snapshot()
+        window_label = format_window_label(
+            self.config.get("schedules"),
+            self.config.get("time_window_start", "16:30"),
+            self.config.get("time_window_end", "18:30"),
+        )
+        vm = self.presenter.build(
+            snapshot=snapshot,
+            online_devices=self._online_devices_count(),
+            window_label=window_label,
+        )
+
+        self.dashboard_view.set_banner(vm.banner_text, vm.should_pulse)
+        self.dashboard_view.set_clock_text(datetime.datetime.now().strftime("%H:%M:%S"))
+        self.dashboard_view.set_devices_text(vm.online_devices_text)
+        self.dashboard_view.set_window_text(vm.window_label)
+        self.dashboard_view.set_runtime_text(
+            f"运行状态: {vm.overall_level.name} / {snapshot.primary_alert.summary}"
+        )
+
+    def update_device_status(self, ip, time_str, status, name=None):
+        self._device_status_map[ip] = status
+        self._refresh_dashboard()
+
+    def add_log(self, time_str, card_id, class_name, action, reason=""):
+        self.dashboard_view.add_log_row(time_str, card_id, class_name, action, reason)
+
+    def load_recent_logs(self):
+        logs = self.db.get_recent_logs()
+        for log in logs:
+            try:
+                dt = log[0].split(" ")[1]
+            except Exception:
+                dt = str(log[0])
+
+            full_status = log[3]
+            action = full_status
+            reason = ""
+            if "(" in full_status and full_status.endswith(")"):
+                parts = full_status.split(" (", 1)
+                action = parts[0]
+                reason = parts[1][:-1]
+            self.add_log(dt, log[1], log[2], action, reason)
 
     def open_mapping_dialog(self):
+        from .mapping_dialog import MappingDialog
+
+        if not self.require_maintenance_access("打开卡号映射"):
+            return
         dialog = MappingDialog(self.db, self)
         dialog.exec()
 
     def open_settings_dialog(self):
         from .settings_dialog import SettingsDialog
+
+        if not self.require_maintenance_access("打开学校设置"):
+            return
         dialog = SettingsDialog(self.config, self.data_sync_service, self)
         dialog.exec()
 
     def open_schedule_dialog(self):
         from .schedule_dialog import ScheduleDialog
+
+        if not self.require_maintenance_access("打开放学时间"):
+            return
         dialog = ScheduleDialog(self.config, self)
         dialog.exec()
 
     def open_device_manager(self):
         from .device_manager_dialog import DeviceManagerDialog
-        dialog = DeviceManagerDialog(self.db, self)
+
+        if not self.require_maintenance_access("打开设备管理"):
+            return
+        dialog = DeviceManagerDialog(self.db, self.config, self)
         dialog.exec()
-        # Refresh main UID device table names if needed?
-        # The udp_server will update on next heartbeat, forcing full refresh is complex 
-        # unless we reload table from DB.
-        # For MVP, wait for next heartbeat or manually clear table.
-        self.device_table.setRowCount(0) 
 
-    def update_device_status(self, ip, time_str, status, name=None):
-        # Allow name to be optional for backward compatibility signals, though we updated signal
-        if name is None:
-            name = ip 
+    def _force_sync_data(self):
+        if not self.require_maintenance_access("执行立即同步"):
+            return
+        if self.data_sync_service and hasattr(self.data_sync_service, "force_sync"):
+            self.data_sync_service.force_sync()
 
-        # Find if row exists for IP
-        found = False
-        for row in range(self.device_table.rowCount()):
-            if self.device_table.item(row, 0).text() == ip:
-                self.device_table.setItem(row, 1, QTableWidgetItem(name)) # Col 1 used to be time?
-                # Wait, layout was: "IP地址", "最后通信", "状态"
-                # Let's change layout to 4 columns or replace IP with Name?
-                # User asked to "modify IP" (change display to Name).
-                # Let's show: Name(IP) | Time | Status
-                
-                # Update cols: 0=IP/Name, 1=Time, 2=Status?
-                # Or add column? 
-                pass 
-                
-        # Better: Re-init columns in setup_ui to: IP | 名称 | 时间 | 状态
-        # But setup_ui is already run.
-        # Let's change standard behavior: 
-        # Col 0: IP
-        # Col 1: Name (New!)
-        # Col 2: Time
-        # Col 3: Status
-        
-        # NOTE: If we change columns dynamically here it might break.
-        # Ideally we refactor setup_ui or just update existing rows.
-        # If we stick to 3 cols: IP | Time | Status
-        # We can put Name in Col 0: "Name (IP)"
-        
-        display_name = f"{name} ({ip})" if name != ip else ip
-        
-        for row in range(self.device_table.rowCount()):
-            # Store IP in data or verify against parsing
-            # Or just use row matching if we store IP in a hidden way?
-            # Simple match against display string contains IP?
-            # Or keep column 0 as pure IP and add Name column?
-            # Let's try adding column if column count is 3.
-            pass
+    def _set_test_mode(self, enabled: bool):
+        if not self.require_maintenance_access("切换测试模式"):
+            self.maintenance_panel.set_test_mode(self.config.get("test_mode", False))
+            return
+        self.config.set("test_mode", bool(enabled))
+        self.config.save()
+        self._refresh_dashboard()
 
-        # To avoid complex refactor mid-flight:
-        # Just update the existing logic to find row by iterate
-        
-        # Redo for safety:
-        # Col 0: IP (Hidden?) or Visible
-        # Col 1: Name 
-        # Col 2: Time
-        # Col 3: Status
-        
-        # Current: IP, Time, Status.
-        # I will change setup_ui to 4 columns.
-        pass
-        
-        # Actually, let's just do it cleanly.
-        found = False
-        for row in range(self.device_table.rowCount()):
-            if self.device_table.item(row, 0).text() == ip:
-                self.device_table.setItem(row, 1, QTableWidgetItem(name))
-                self.device_table.setItem(row, 2, QTableWidgetItem(time_str))
-                status_item = QTableWidgetItem(status)
-                status_item.setForeground(QColor("green" if status == "在线" else "red"))
-                self.device_table.setItem(row, 3, status_item)
-                found = True
-                break
-        
-        if not found:
-            row = self.device_table.rowCount()
-            self.device_table.insertRow(row)
-            self.device_table.setItem(row, 0, QTableWidgetItem(ip))
-            self.device_table.setItem(row, 1, QTableWidgetItem(name))
-            self.device_table.setItem(row, 2, QTableWidgetItem(time_str))
-            status_item = QTableWidgetItem(status)
-            status_item.setForeground(QColor("green" if status == "在线" else "red"))
-            self.device_table.setItem(row, 3, status_item)
+    def _open_settings_from_maintenance(self):
+        self.open_settings_dialog()
 
-    def toggle_test_mode(self, state):
-        is_test = (state == Qt.CheckState.Checked.value) or (state == 2) # Qt.CheckState or int
-        self.config.set("test_mode", is_test)
-        # ConfigManager set doesn't auto-save always? We should save or keep runtime.
-        # BroadcastManager reads from config each time in new logic?
-        # Actually logic reads: self.config.get("test_mode") in process_swipe.
-        # So updating config dict is enough. But better save to persist.
-        # self.config.save() # Optional, user choice if test mode persists.
-        status_text = "已开启 (API推送禁用)" if is_test else "已关闭 (正常模式)"
-        print(f"[Main] Test Mode {status_text}")
-        
-        # Visual feedback?
-        if is_test:
-            self.test_mode_check.setStyleSheet("color: blue; font-weight: bold;")
-        else:
-            self.test_mode_check.setStyleSheet("")
+    def _open_schedule_from_maintenance(self):
+        self.open_schedule_dialog()
 
-    def add_log(self, time_str, card_id, class_name, action, reason=""):
-        self.log_table.insertRow(0)
-        self.log_table.setItem(0, 0, QTableWidgetItem(time_str))
-        self.log_table.setItem(0, 1, QTableWidgetItem(card_id))
-        self.log_table.setItem(0, 2, QTableWidgetItem(class_name))
-        
-        action_item = QTableWidgetItem(action)
-        if "播报" in action:
-            action_item.setForeground(QColor("green"))
-        elif "跳过" in action:
-            action_item.setForeground(QColor("orange"))
-            
-        self.log_table.setItem(0, 3, action_item)
-        self.log_table.setItem(0, 4, QTableWidgetItem(reason))
-        
-        # Limit rows
-        if self.log_table.rowCount() > 100:
-            self.log_table.removeRow(100)
+    def _open_device_manager_from_maintenance(self):
+        self.open_device_manager()
 
-    def load_recent_logs(self):
-        logs = self.db.get_recent_logs()
-        for log in logs:
-            # log format: (swipe_time, card_id, class_name, full_status)
-            # full_status might be "Action (Reason)" or just "Action"
-            try:
-                dt = log[0].split(' ')[1]
-            except:
-                dt = log[0]
-            
-            full_status = log[3]
-            action = full_status
-            reason = ""
-            
-            # Simple parse for backward compatibility display
-            if "(" in full_status and full_status.endswith(")"):
-                parts = full_status.split(" (", 1)
-                action = parts[0]
-                reason = parts[1][:-1] # remove trailing )
-                
-            self.add_log(dt, log[1], log[2], action, reason)
+    def _open_mapping_from_maintenance(self):
+        self.open_mapping_dialog()
 
-    def update_status_bar(self):
-        # Update Time Window Display
-        schedules = self.config.get("schedules")
-        window_text = "默认: " + f"{self.config.get('time_window_start')} - {self.config.get('time_window_end')}"
-        
-        if schedules:
-            import datetime
-            current_weekday = datetime.datetime.now().weekday() + 1
-            today_rules = [s for s in schedules if s.get("weekday") == current_weekday]
-            if today_rules:
-                ranges_str_list = []
-                for rule in today_rules:
-                    for r in rule.get("timeRanges", []):
-                        start = r.get("startTime")
-                        end = r.get("endTime")
-                        # Filter out empty/zero times if any
-                        if start != "00:00" or end != "00:00":
-                             ranges_str_list.append(f"{start}-{end}")
-                
-                if ranges_str_list:
-                    window_text = "今日: " + ", ".join(ranges_str_list)
-
-        self.window_label.setText(f"播报时段: {window_text}")
-
-        # Update Status
-        if self.broadcast_manager.is_within_time_window():
-             self.status_label.setText("当前状态: [监测中] 播报时段内")
-             self.status_label.setStyleSheet("color: green; font-weight: bold;")
-        else:
-             self.status_label.setText("当前状态: [待机] 非播报时段")
-             self.status_label.setStyleSheet("color: gray;")
+    def _force_sync_from_maintenance(self):
+        self._force_sync_data()

@@ -23,5 +23,9 @@ logs/
 Thumbs.db
 .DS_Store
 
+# Brainstorm artifacts
+.superpowers/
+.worktrees/
+
 # Gradle
 .gradle/

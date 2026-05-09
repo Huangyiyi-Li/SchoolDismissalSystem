@@ -4,12 +4,21 @@ import datetime
 import time
 import queue
 import os
+import logging
+
+from .broadcast_policy import evaluate_swipe
+from .dismissal_window import get_active_window_signature
+from .system_status import AlertLevel, RuntimeStatusStore, ServiceState
+from .tts_settings import normalize_tts_rate, normalize_tts_volume
 
 class TTSWorker(QObject):
     finished = pyqtSignal()
+    spoken = pyqtSignal(str)
+    error = pyqtSignal(str)
     
-    def __init__(self):
+    def __init__(self, config_manager=None):
         super().__init__()
+        self.config = config_manager
         self.queue = queue.Queue()
         self.retry_count = 3
         self.running = True
@@ -27,33 +36,45 @@ class TTSWorker(QObject):
 
         while self.running:
             try:
-                if not self.queue.empty():
-                    text = self.queue.get()
-                    print(f"[TTS] Broadcasting: {text}")
-                    
-                    try:
-                        # Re-init engine for each broadcast to prevent SAPI state issues
-                        engine = pyttsx3.init()
-                        engine.setProperty('volume', 1.0)
-                        
-                        # Broadcast 3 times
-                        full_text = f"{text}，{text}，{text}"
-                        engine.say(full_text)
-                        
-                        # Use runAndWait to block until finished
-                        engine.runAndWait()
-                        
-                        # Cleanup engine explicitly
-                        engine.stop()
-                        del engine
-                    except Exception as e_inner:
-                         print(f"[TTS] Inner Loop Error: {e_inner}")
+                try:
+                    text = self.queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
 
-                    time.sleep(0.5) 
-                else:
-                    time.sleep(0.1)
+                if text is None:
+                    continue
+
+                print(f"[TTS] Broadcasting: {text}")
+
+                try:
+                    engine = pyttsx3.init()
+                    rate = normalize_tts_rate(
+                        self.config.get("tts_rate", 160) if self.config else 160
+                    )
+                    volume = normalize_tts_volume(
+                        self.config.get("tts_volume", 1.0) if self.config else 1.0
+                    )
+                    engine.setProperty("rate", rate)
+                    engine.setProperty("volume", volume)
+                    logging.getLogger(__name__).info(
+                        "TTS speak start rate=%s volume=%.2f text=%s",
+                        rate,
+                        volume,
+                        text,
+                    )
+                    engine.say(text)
+                    engine.runAndWait()
+                    engine.stop()
+                    del engine
+                    self.spoken.emit(text)
+                except Exception as e_inner:
+                    logging.getLogger(__name__).exception("TTS playback failed")
+                    self.error.emit(str(e_inner))
+
+                time.sleep(0.5)
             except Exception as e:
-                print(f"[TTS] Playback Error: {e}")
+                logging.getLogger(__name__).exception("TTS worker loop failed")
+                self.error.emit(str(e))
                 time.sleep(1)
         
         # Cleanup COM in the WORKER THREAD
@@ -65,6 +86,7 @@ class TTSWorker(QObject):
 
     def stop(self):
         self.running = False
+        self.queue.put(None)
         # Do NOT uninitialize COM here, as this runs in Main Thread!
 
 
@@ -72,11 +94,12 @@ class BroadcastManager(QObject):
     log_updated = pyqtSignal(str, str, str, str, str) # time, card, class, action, reason
     queue_updated = pyqtSignal(list) # list of class names
 
-    def __init__(self, config_manager, db_manager, api_service=None):
+    def __init__(self, config_manager, db_manager, api_service=None, status_store=None):
         super().__init__()
         self.config = config_manager
         self.db = db_manager
         self.api_service = api_service
+        self.status_store = status_store or RuntimeStatusStore()
         
         # Ensure logs directory exists
         from ..utils.path_utils import get_app_root
@@ -89,154 +112,158 @@ class BroadcastManager(QObject):
         
         # TTS Thread
         self.tts_thread = QThread()
-        self.tts_worker = TTSWorker()
+        self.tts_worker = TTSWorker(config_manager)
         self.tts_worker.moveToThread(self.tts_thread)
         self.tts_thread.started.connect(self.tts_worker.run)
+        self.tts_worker.spoken.connect(self._handle_tts_success)
+        self.tts_worker.error.connect(self._handle_tts_error)
         self.tts_thread.start()
+        self._set_status(AlertLevel.OK, "broadcast ready")
 
-    def get_current_window_signature(self):
-        """
-        Returns a unique string for the current active time window, e.g. 'Weekday-1_08:30-18:30'.
-        Returns None if not in any window.
-        """
-        # 1. Check Dynamic Schedule
-        schedules = self.config.get("schedules")
-        if schedules:
-            current_weekday = datetime.datetime.now().weekday() + 1
-            now_time = datetime.datetime.now().time()
-            
-            today_rules = [s for s in schedules if s.get("weekday") == current_weekday]
-            for rule in today_rules:
-                ranges = rule.get("timeRanges", [])
-                for r in ranges:
-                    try:
-                        start_str = r.get("startTime")
-                        end_str = r.get("endTime")
-                        start_t = datetime.datetime.strptime(start_str, "%H:%M").time()
-                        end_t = datetime.datetime.strptime(end_str, "%H:%M").time()
-                        
-                        if start_t <= now_time <= end_t:
-                            return f"WD{current_weekday}_{start_str}-{end_str}"
-                    except Exception as e:
-                        print(f"[TimeCheck] Parse Error: {e}")
-                        continue
-            
-            # If dynamic schedules exist but no match, return None (don't fallback to static if dynamic present?)
-            # Assuming strictly following schedules if present.
-            return None
+    def _set_status(self, level, summary, detail=""):
+        now = datetime.datetime.now()
+        self.status_store.update(
+            "broadcast",
+            ServiceState(
+                name="broadcast",
+                level=level,
+                summary=summary,
+                detail=detail,
+                updated_at=now,
+            ),
+        )
 
-        # 2. Fallback to Static Config
-        try:
-            start_str = self.config.get("time_window_start", "16:30")
-            end_str = self.config.get("time_window_end", "18:30")
-            start_time = datetime.datetime.strptime(start_str, "%H:%M").time()
-            end_time = datetime.datetime.strptime(end_str, "%H:%M").time()
-            now = datetime.datetime.now().time()
-            
-            if start_time <= now <= end_time:
-                return f"Static_{start_str}-{end_str}"
-        except:
-            pass
-            
-        return None
+    def get_current_window_signature(self, now=None):
+        return get_active_window_signature(
+            self.config.get("schedules"),
+            self.config.get("time_window_start", "16:30"),
+            self.config.get("time_window_end", "18:30"),
+            now=now,
+        )
 
     def process_swipe(self, card_id, ip):
+        started = time.perf_counter()
+        now = datetime.datetime.now()
+
         # 1. Lookup Class (FIRST)
+        lookup_started = time.perf_counter()
         class_info = self.db.get_class_info_by_card(card_id)
+        lookup_finished = time.perf_counter()
         class_name = class_info[0]
         class_id = class_info[1]
-        
-        if not class_name:
-            self._log_event(card_id, "未知", "跳过", "无效卡号")
-            return
+        window_sig = self.get_current_window_signature(now=now)
+        if window_sig:
+            print(f"[Debug] Current Window: {window_sig}")
 
-        # 2. Check Time Window (SECOND)
-        window_sig = self.get_current_window_signature()
-        if not window_sig:
-            self._log_event(card_id, class_name, "跳过", "非播报时段")
-            return
+        decision_started = time.perf_counter()
+        decision = evaluate_swipe(
+            class_name=class_name,
+            class_id=class_id,
+            card_id=card_id,
+            window_signature=window_sig,
+            now=now,
+            voice_history=self.voice_history,
+            api_push_history=self.api_push_history,
+            deduplication_interval_seconds=self.config.get("deduplication_interval_seconds", 300),
+            broadcast_count=self.config.get("broadcast_count", 3),
+            test_mode=self.config.get("test_mode", False),
+            api_service_available=self.api_service is not None,
+        )
+        decision_finished = time.perf_counter()
 
-        print(f"[Debug] Current Window: {window_sig}")
+        tts_queue_ms = 0.0
+        if decision.should_voice and class_name:
+            tts_started = time.perf_counter()
+            self.tts_worker.add_text(decision.voice_text)
+            self.voice_history[class_name] = window_sig or ""
+            tts_queue_ms = (time.perf_counter() - tts_started) * 1000.0
 
-        # 3. Voice Logic (Class Level Deduplication)
-        last_window = self.voice_history.get(class_name)
-        should_voice = (last_window != window_sig)
-        
-        action = "处理中"
-        reason = ""
-        
-        if should_voice:
-            message = f"{class_name}正在放学"
-            self.tts_worker.add_text(message)
-            self.voice_history[class_name] = window_sig
-            action = "语音播报"
-            reason = "正常"
-        else:
-            action = "语音跳过"
-            reason = "重复播报"
+        api_dispatch_ms = 0.0
+        if decision.should_push_api and self.api_service and class_id:
+            import threading
 
-        # 4. API Push Logic (Card Level Throttling)
-        should_push = False
-        last_push = self.api_push_history.get(card_id)
-        interval = self.config.get("deduplication_interval_seconds", 300)
-        
-        if not last_push or (datetime.datetime.now() - last_push).total_seconds() > interval:
-            should_push = True
-        else:
-            if "播报" in action:
-                reason += "/推送冷却"
-            else:
-                reason = "重复/推送冷却"
+            def push_api():
+                print(f"[Debug] Spawning API Push Thread for Class {class_id}")
+                self.api_service.push_dismissal_notice(class_id, card_id, 1)
 
-        if should_push:
-            # Check Test Mode
-            is_test_mode = self.config.get("test_mode", False)
-            if self.api_service and class_id and not is_test_mode:
-                import threading
-                def push_api():
-                     print(f"[Debug] Spawning API Push Thread for Class {class_id}")
-                     self.api_service.push_dismissal_notice(class_id, card_id, 1)
-                threading.Thread(target=push_api, daemon=True).start()
-                self.api_push_history[card_id] = datetime.datetime.now()
-                if "播报" in action:
-                    reason += "/推送成功"
-                else:
-                    action += "/推送成功"
-            elif is_test_mode:
-                if "播报" in action:
-                    reason += "/测试模式"
-                else:
-                    action += "/测试模式"
-            else:
-                if "播报" in action:
-                    reason += "/无API服务"
-        
+            api_started = time.perf_counter()
+            threading.Thread(target=push_api, daemon=True).start()
+            self.api_push_history[card_id] = now
+            api_dispatch_ms = (time.perf_counter() - api_started) * 1000.0
+
         # Log Result
-        print(f"[Debug] Process Result: {action} - {reason}")
-        self._log_event(card_id, class_name, action, reason)
+        print(f"[Debug] Process Result: {decision.action} - {decision.reason}")
+        log_started = time.perf_counter()
+        self._log_event(card_id, class_name or "未知", decision.action, decision.reason)
+        log_ms = (time.perf_counter() - log_started) * 1000.0
+
+        if decision.action == "跳过" and decision.reason == "无效卡号":
+            self._set_status(AlertLevel.WARNING, "invalid card", card_id)
+        else:
+            self._set_status(AlertLevel.OK, "swipe processed", decision.action)
+        logging.getLogger(__name__).info(
+            "Swipe pipeline ip=%s card_id=%s class=%s lookup_ms=%.1f decision_ms=%.1f tts_queue_ms=%.1f api_dispatch_ms=%.1f log_ms=%.1f total_ms=%.1f action=%s reason=%s",
+            ip,
+            card_id,
+            class_name or "未知",
+            (lookup_finished - lookup_started) * 1000.0,
+            (decision_finished - decision_started) * 1000.0,
+            tts_queue_ms,
+            api_dispatch_ms,
+            log_ms,
+            (time.perf_counter() - started) * 1000.0,
+            decision.action,
+            decision.reason,
+        )
+
+    @pyqtSlot(str)
+    def _handle_tts_success(self, text):
+        logging.getLogger(__name__).info("TTS playback finished")
+        self._set_status(AlertLevel.OK, "tts ok", text[:32])
+
+    @pyqtSlot(str)
+    def _handle_tts_error(self, detail):
+        self._set_status(AlertLevel.WARNING, "tts failed", detail)
 
     def is_within_time_window(self):
         return self.get_current_window_signature() is not None
 
     def _log_event(self, card_id, class_name, action, reason):
+        started = time.perf_counter()
         # DB: Combine for backward compatibility
         full_status = f"{action} ({reason})" if reason else action
+        db_started = time.perf_counter()
         self.db.log_swipe(card_id, class_name, full_status)
+        db_ms = (time.perf_counter() - db_started) * 1000.0
         
         now = datetime.datetime.now()
         now_str = now.strftime("%H:%M:%S")
         date_str = now.strftime("%Y-%m-%d")
         
         # Emit Signal for UI
+        ui_started = time.perf_counter()
         self.log_updated.emit(now_str, card_id, class_name, action, reason)
+        ui_ms = (time.perf_counter() - ui_started) * 1000.0
         
         # File Logging
+        file_ms = 0.0
         try:
+            file_started = time.perf_counter()
             log_file = os.path.join(self.log_dir, f"{date_str}.txt")
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(f"[{now_str}] [Card:{card_id}] [Class:{class_name}] [{action}] [{reason}]\n")
+            file_ms = (time.perf_counter() - file_started) * 1000.0
         except Exception as e:
             print(f"[Log] File Write Error: {e}")
+        logging.getLogger(__name__).info(
+            "Swipe log persisted card_id=%s class=%s db_ms=%.1f ui_emit_ms=%.1f file_ms=%.1f total_ms=%.1f",
+            card_id,
+            class_name,
+            db_ms,
+            ui_ms,
+            file_ms,
+            (time.perf_counter() - started) * 1000.0,
+        )
 
     def cleanup(self):
         self.tts_worker.stop()

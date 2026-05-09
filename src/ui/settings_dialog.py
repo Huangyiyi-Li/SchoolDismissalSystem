@@ -1,6 +1,23 @@
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QLineEdit, QPushButton, QMessageBox, QFormLayout)
+import os
+
+from PyQt6.QtWidgets import (
+    QDialog,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+)
 from PyQt6.QtCore import Qt
+
+from ..services.tts_settings import normalize_tts_rate, normalize_tts_volume
+from ..utils.runtime_logging import get_runtime_log_paths
+
 
 class SettingsDialog(QDialog):
     def __init__(self, config_manager, data_sync_service=None, parent=None):
@@ -8,8 +25,19 @@ class SettingsDialog(QDialog):
         self.config = config_manager
         self.sync_service = data_sync_service
         self.setWindowTitle("绑定学校")
-        self.resize(400, 150)
+        self.resize(520, 360)
         self.setup_ui()
+
+    def _touch_parent(self):
+        parent = self.parent()
+        if parent and hasattr(parent, "touch_maintenance_session"):
+            parent.touch_maintenance_session()
+
+    def _require_parent_access(self, action_label: str) -> bool:
+        parent = self.parent()
+        if parent and hasattr(parent, "require_maintenance_access"):
+            return parent.require_maintenance_access(action_label)
+        return True
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -22,15 +50,45 @@ class SettingsDialog(QDialog):
         self.school_id_edit.setPlaceholderText("请输入学校ID (如 40125)")
         form_layout.addRow("学校 ID:", self.school_id_edit)
         
-        # UDP Port
+        # Ingress Port
         self.port_edit = QLineEdit()
         self.port_edit.setText(str(self.config.get("udp_port", 39169)))
-        form_layout.addRow("UDP 端口:", self.port_edit)
-
-        # Removed manual time settings as per requirement
-        # Time is now managed via Server Schedule
+        form_layout.addRow("接收端口:", self.port_edit)
 
         layout.addLayout(form_layout)
+
+        audio_group = QGroupBox("语音播报")
+        audio_layout = QFormLayout(audio_group)
+
+        self.tts_rate_spin = QSpinBox()
+        self.tts_rate_spin.setRange(80, 240)
+        self.tts_rate_spin.setSingleStep(5)
+        self.tts_rate_spin.setValue(normalize_tts_rate(self.config.get("tts_rate", 160)))
+        self.tts_rate_spin.setSuffix(" 速率")
+        audio_layout.addRow("播报语速:", self.tts_rate_spin)
+
+        self.tts_volume_spin = QDoubleSpinBox()
+        self.tts_volume_spin.setRange(20.0, 100.0)
+        self.tts_volume_spin.setSingleStep(5.0)
+        self.tts_volume_spin.setDecimals(0)
+        self.tts_volume_spin.setValue(normalize_tts_volume(self.config.get("tts_volume", 1.0)) * 100)
+        self.tts_volume_spin.setSuffix("%")
+        audio_layout.addRow("播报音量:", self.tts_volume_spin)
+
+        layout.addWidget(audio_group)
+
+        log_paths = get_runtime_log_paths()
+        log_dir = os.path.dirname(log_paths.runtime_log_path)
+        hint = QLabel(
+            "运行日志目录:\n"
+            f"{log_dir}\n"
+            f"普通日志: {os.path.basename(log_paths.runtime_log_path)}\n"
+            f"崩溃日志: {os.path.basename(log_paths.crash_log_path)}\n"
+            "说明: 100% 已是语音引擎最大音量，如仍偏小需要结合系统语音或外接音箱处理。"
+        )
+        hint.setWordWrap(True)
+        hint.setProperty("muted", True)
+        layout.addWidget(hint)
 
         # Buttons
         btn_layout = QHBoxLayout()
@@ -51,6 +109,10 @@ class SettingsDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def save_settings(self):
+        if not self._require_parent_access("保存学校设置"):
+            self.close()
+            return
+        self._touch_parent()
         new_school_id = self.school_id_edit.text().strip()
         port_str = self.port_edit.text().strip()
 
@@ -61,7 +123,7 @@ class SettingsDialog(QDialog):
         try:
             port = int(port_str)
         except ValueError:
-            QMessageBox.warning(self, "错误", "UDP 端口必须是数字")
+            QMessageBox.warning(self, "错误", "接收端口必须是数字")
             return
 
         # Check if School ID changed
@@ -70,7 +132,8 @@ class SettingsDialog(QDialog):
 
         self.config.set("school_id", new_school_id)
         self.config.set("udp_port", port)
-        # Time settings removed
+        self.config.set("tts_rate", int(self.tts_rate_spin.value()))
+        self.config.set("tts_volume", float(self.tts_volume_spin.value()) / 100.0)
         self.config.save()
         
         msg = "设置已保存。"
@@ -87,6 +150,10 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def trigger_sync(self, silent=False):
+        if not self._require_parent_access("执行立即同步"):
+            self.close()
+            return
+        self._touch_parent()
         if self.sync_service:
             # Apply current text just in case (though save should handle it)
             # Now self.sync_service.api should work thanks to property

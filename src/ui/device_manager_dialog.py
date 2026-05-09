@@ -4,13 +4,25 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PyQt6.QtCore import Qt
 
 class DeviceManagerDialog(QDialog):
-    def __init__(self, db_manager, parent=None):
+    def __init__(self, db_manager, config_manager=None, parent=None):
         super().__init__(parent)
         self.db = db_manager
+        self.config = config_manager
         self.setWindowTitle("设备管理")
         self.resize(600, 400)
         self.setup_ui()
         self.load_data()
+
+    def _touch_parent(self):
+        parent = self.parent()
+        if parent and hasattr(parent, "touch_maintenance_session"):
+            parent.touch_maintenance_session()
+
+    def _require_parent_access(self, action_label: str) -> bool:
+        parent = self.parent()
+        if parent and hasattr(parent, "require_maintenance_access"):
+            return parent.require_maintenance_access(action_label)
+        return True
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -42,6 +54,7 @@ class DeviceManagerDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def load_data(self):
+        self._touch_parent()
         self.table.setRowCount(0)
         devices = self.db.get_devices() # [(ip, name, last_seen), ...]
         
@@ -52,6 +65,10 @@ class DeviceManagerDialog(QDialog):
             self.table.setItem(row_idx, 2, QTableWidgetItem(str(last_seen)))
 
     def edit_device_name(self):
+        if not self._require_parent_access("修改设备名称"):
+            self.close()
+            return
+        self._touch_parent()
         current_row = self.table.currentRow()
         if current_row < 0:
             QMessageBox.warning(self, "提示", "请先选择一个设备")

@@ -11,12 +11,19 @@ class ScheduleDialog(QDialog):
         self.resize(600, 400)
         self.setup_ui()
 
+    def _touch_parent(self):
+        parent = self.parent()
+        if parent and hasattr(parent, "touch_maintenance_session"):
+            parent.touch_maintenance_session()
+
     def setup_ui(self):
+        self._touch_parent()
         layout = QVBoxLayout(self)
 
         # Title / Info
         info_label = QLabel("以下时间表由服务器同步，仅供参考。")
-        info_label.setStyleSheet("color: gray; font-style: italic; margin-bottom: 10px;")
+        info_label.setProperty("muted", True)
+        info_label.setStyleSheet("font-style: italic; margin-bottom: 10px;")
         layout.addWidget(info_label)
 
         # Tab Widget for Weekdays
