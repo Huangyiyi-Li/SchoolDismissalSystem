@@ -18,7 +18,7 @@ class DeviceManagerDialog(QDialog):
         # Table
         self.table = QTableWidget()
         self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["IP地址", "设备名称", "最后在线"])
+        self.table.setHorizontalHeaderLabels(["IP地址", "设备名称", "最后刷卡通信"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)

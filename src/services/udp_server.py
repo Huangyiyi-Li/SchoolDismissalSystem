@@ -1,19 +1,19 @@
 from PyQt6.QtNetwork import QUdpSocket, QHostAddress
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer
+from PyQt6.QtCore import QObject, pyqtSignal
 import datetime
 
 class UDPServerService(QObject):
     # Signal to emit when a valid card is swiped: (card_id, ip_address)
     card_swiped = pyqtSignal(str, str)
-    # Signal to update device list in UI: (ip, last_seen, status, name) - Updated signature
-    device_updated = pyqtSignal(str, str, str, str) 
+    # Signal to update device list in UI: (ip, last_activity, activity, name)
+    device_updated = pyqtSignal(str, str, str, str)
 
     def __init__(self, port=39169, db_manager=None):
         super().__init__()
         self.port = port
         self.db = db_manager
         self.socket = None
-        self.devices = {}  # {ip: last_seen_datetime}
+        self.device_names = {}
         
     def start(self):
         self.socket = QUdpSocket(self)
@@ -40,22 +40,6 @@ class UDPServerService(QObject):
             self.parse_datagram(datagram, ip)
 
     def parse_datagram(self, data, ip):
-        # Update device status
-        now = datetime.datetime.now()
-        self.devices[ip] = now
-        time_str = now.strftime("%H:%M:%S")
-        
-        device_name = ip
-        if self.db:
-            # Persist and get name
-            # Only update DB if needed (optimization: verify frequency?)
-            # For now, upsert every packet might be heavy if high traffic. 
-            # But traffic is low (card swipes).
-            self.db.upsert_device(ip, last_seen=now)
-            device_name = self.db.get_device_name(ip)
-
-        self.device_updated.emit(ip, time_str, "在线", device_name)
-
         # Protocol Parsing
         # Fixed length 22 bytes
         if len(data) == 22:
@@ -101,6 +85,7 @@ class UDPServerService(QObject):
                     # Convert bytes to integer (little endian)
                     card_int = int.from_bytes(card_bytes, byteorder='little')
                     card_id_str = str(card_int)
+                    self._record_device_activity(ip)
                     
                     print(f"[UDP] Received Card ID: {card_id_str} (Hex: {card_bytes.hex().upper()}) from {ip} Seq:{seq_id}")
                     self.card_swiped.emit(card_id_str, ip)
@@ -111,18 +96,14 @@ class UDPServerService(QObject):
         else:
             print(f"[UDP] Invalid Length {len(data)} from {ip}")
 
-    def check_offline_devices(self):
+    def _record_device_activity(self, ip):
         now = datetime.datetime.now()
-        for ip, last_seen in list(self.devices.items()):
-            delta = (now - last_seen).total_seconds()
-            
-            device_name = ip
-            if self.db:
-                device_name = self.db.get_device_name(ip)
+        time_str = now.strftime("%H:%M:%S")
 
-            if delta > 300: # 5 minutes clear
-                del self.devices[ip]
-                # self.device_updated.emit(ip, "N/A", "移除", device_name) 
-            elif delta > 60: # 1 minute offline
-                time_str = last_seen.strftime("%H:%M:%S")
-                self.device_updated.emit(ip, time_str, "离线", device_name)
+        device_name = self.device_names.get(ip, ip)
+        if self.db:
+            self.db.upsert_device(ip, last_seen=now)
+            device_name = self.db.get_device_name(ip)
+            self.device_names[ip] = device_name
+
+        self.device_updated.emit(ip, time_str, "收到刷卡", device_name)

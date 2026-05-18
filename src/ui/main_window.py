@@ -112,12 +112,12 @@ class MainWindow(QMainWindow):
         # Left Panel (Status + Devices)
         left_layout = QVBoxLayout()
         
-        # Connection Status Group
-        dev_group = QGroupBox("设备状态")
+        # Device Activity Group
+        dev_group = QGroupBox("设备通信记录")
         dev_layout = QVBoxLayout()
         self.device_table = QTableWidget()
         self.device_table.setColumnCount(4)
-        self.device_table.setHorizontalHeaderLabels(["IP地址", "设备名称", "最后通信", "状态"])
+        self.device_table.setHorizontalHeaderLabels(["IP地址", "设备名称", "最后刷卡通信", "记录"])
         self.device_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         dev_layout.addWidget(self.device_table)
         dev_group.setLayout(dev_layout)
@@ -197,76 +197,21 @@ class MainWindow(QMainWindow):
         from .device_manager_dialog import DeviceManagerDialog
         dialog = DeviceManagerDialog(self.db, self)
         dialog.exec()
-        # Refresh main UID device table names if needed?
-        # The udp_server will update on next heartbeat, forcing full refresh is complex 
-        # unless we reload table from DB.
-        # For MVP, wait for next heartbeat or manually clear table.
         self.device_table.setRowCount(0) 
 
-    def update_device_status(self, ip, time_str, status, name=None):
+    def update_device_status(self, ip, time_str, activity, name=None):
         # Allow name to be optional for backward compatibility signals, though we updated signal
         if name is None:
             name = ip 
 
-        # Find if row exists for IP
-        found = False
-        for row in range(self.device_table.rowCount()):
-            if self.device_table.item(row, 0).text() == ip:
-                self.device_table.setItem(row, 1, QTableWidgetItem(name)) # Col 1 used to be time?
-                # Wait, layout was: "IP地址", "最后通信", "状态"
-                # Let's change layout to 4 columns or replace IP with Name?
-                # User asked to "modify IP" (change display to Name).
-                # Let's show: Name(IP) | Time | Status
-                
-                # Update cols: 0=IP/Name, 1=Time, 2=Status?
-                # Or add column? 
-                pass 
-                
-        # Better: Re-init columns in setup_ui to: IP | 名称 | 时间 | 状态
-        # But setup_ui is already run.
-        # Let's change standard behavior: 
-        # Col 0: IP
-        # Col 1: Name (New!)
-        # Col 2: Time
-        # Col 3: Status
-        
-        # NOTE: If we change columns dynamically here it might break.
-        # Ideally we refactor setup_ui or just update existing rows.
-        # If we stick to 3 cols: IP | Time | Status
-        # We can put Name in Col 0: "Name (IP)"
-        
-        display_name = f"{name} ({ip})" if name != ip else ip
-        
-        for row in range(self.device_table.rowCount()):
-            # Store IP in data or verify against parsing
-            # Or just use row matching if we store IP in a hidden way?
-            # Simple match against display string contains IP?
-            # Or keep column 0 as pure IP and add Name column?
-            # Let's try adding column if column count is 3.
-            pass
-
-        # To avoid complex refactor mid-flight:
-        # Just update the existing logic to find row by iterate
-        
-        # Redo for safety:
-        # Col 0: IP (Hidden?) or Visible
-        # Col 1: Name 
-        # Col 2: Time
-        # Col 3: Status
-        
-        # Current: IP, Time, Status.
-        # I will change setup_ui to 4 columns.
-        pass
-        
-        # Actually, let's just do it cleanly.
         found = False
         for row in range(self.device_table.rowCount()):
             if self.device_table.item(row, 0).text() == ip:
                 self.device_table.setItem(row, 1, QTableWidgetItem(name))
                 self.device_table.setItem(row, 2, QTableWidgetItem(time_str))
-                status_item = QTableWidgetItem(status)
-                status_item.setForeground(QColor("green" if status == "在线" else "red"))
-                self.device_table.setItem(row, 3, status_item)
+                activity_item = QTableWidgetItem(activity)
+                activity_item.setForeground(QColor("green"))
+                self.device_table.setItem(row, 3, activity_item)
                 found = True
                 break
         
@@ -276,9 +221,9 @@ class MainWindow(QMainWindow):
             self.device_table.setItem(row, 0, QTableWidgetItem(ip))
             self.device_table.setItem(row, 1, QTableWidgetItem(name))
             self.device_table.setItem(row, 2, QTableWidgetItem(time_str))
-            status_item = QTableWidgetItem(status)
-            status_item.setForeground(QColor("green" if status == "在线" else "red"))
-            self.device_table.setItem(row, 3, status_item)
+            activity_item = QTableWidgetItem(activity)
+            activity_item.setForeground(QColor("green"))
+            self.device_table.setItem(row, 3, activity_item)
 
     def toggle_test_mode(self, state):
         is_test = (state == Qt.CheckState.Checked.value) or (state == 2) # Qt.CheckState or int

@@ -5,6 +5,8 @@ import time
 import queue
 import os
 
+from .voice_text import build_dismissal_voice_text
+
 class TTSWorker(QObject):
     finished = pyqtSignal()
     
@@ -166,7 +168,7 @@ class BroadcastManager(QObject):
         reason = ""
         
         if should_voice:
-            message = f"{class_name}正在放学"
+            message = build_dismissal_voice_text(class_name)
             self.tts_worker.add_text(message)
             self.voice_history[class_name] = window_sig
             action = "语音播报"
