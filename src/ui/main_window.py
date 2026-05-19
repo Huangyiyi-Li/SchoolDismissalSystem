@@ -1,5 +1,5 @@
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QGroupBox, QTableWidget, QTableWidgetItem, QListWidget, 
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                             QGroupBox, QTableWidget, QTableWidgetItem,
                              QLabel, QHeaderView, QToolBar)
 from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtCore import Qt, QTimer
@@ -100,29 +100,14 @@ class MainWindow(QMainWindow):
         schedule_action.triggered.connect(self.open_schedule_dialog)
         toolbar.addAction(schedule_action)
         
-        device_action = QAction("设备管理", self)
-        device_action.triggered.connect(self.open_device_manager)
-        toolbar.addAction(device_action)
-        
         # Central Widget
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QHBoxLayout(central)
 
-        # Left Panel (Status + Devices)
+        # Left Panel (Status)
         left_layout = QVBoxLayout()
-        
-        # Device Activity Group
-        dev_group = QGroupBox("设备通信记录")
-        dev_layout = QVBoxLayout()
-        self.device_table = QTableWidget()
-        self.device_table.setColumnCount(4)
-        self.device_table.setHorizontalHeaderLabels(["IP地址", "设备名称", "最后刷卡通信", "记录"])
-        self.device_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        dev_layout.addWidget(self.device_table)
-        dev_group.setLayout(dev_layout)
-        left_layout.addWidget(dev_group)
-        
+
         # Time Window Status
         status_group = QGroupBox("系统状态")
         status_layout = QVBoxLayout()
@@ -171,7 +156,6 @@ class MainWindow(QMainWindow):
     def connect_signals(self):
         # UDP Signals
         self.udp_server.card_swiped.connect(self.broadcast_manager.process_swipe)
-        self.udp_server.device_updated.connect(self.update_device_status)
         
         # Broadcast Signals
         self.broadcast_manager.log_updated.connect(self.add_log)
@@ -192,38 +176,6 @@ class MainWindow(QMainWindow):
         from .schedule_dialog import ScheduleDialog
         dialog = ScheduleDialog(self.config, self)
         dialog.exec()
-
-    def open_device_manager(self):
-        from .device_manager_dialog import DeviceManagerDialog
-        dialog = DeviceManagerDialog(self.db, self)
-        dialog.exec()
-        self.device_table.setRowCount(0) 
-
-    def update_device_status(self, ip, time_str, activity, name=None):
-        # Allow name to be optional for backward compatibility signals, though we updated signal
-        if name is None:
-            name = ip 
-
-        found = False
-        for row in range(self.device_table.rowCount()):
-            if self.device_table.item(row, 0).text() == ip:
-                self.device_table.setItem(row, 1, QTableWidgetItem(name))
-                self.device_table.setItem(row, 2, QTableWidgetItem(time_str))
-                activity_item = QTableWidgetItem(activity)
-                activity_item.setForeground(QColor("green"))
-                self.device_table.setItem(row, 3, activity_item)
-                found = True
-                break
-        
-        if not found:
-            row = self.device_table.rowCount()
-            self.device_table.insertRow(row)
-            self.device_table.setItem(row, 0, QTableWidgetItem(ip))
-            self.device_table.setItem(row, 1, QTableWidgetItem(name))
-            self.device_table.setItem(row, 2, QTableWidgetItem(time_str))
-            activity_item = QTableWidgetItem(activity)
-            activity_item.setForeground(QColor("green"))
-            self.device_table.setItem(row, 3, activity_item)
 
     def toggle_test_mode(self, state):
         is_test = (state == Qt.CheckState.Checked.value) or (state == 2) # Qt.CheckState or int
@@ -308,7 +260,10 @@ class MainWindow(QMainWindow):
         self.window_label.setText(f"播报时段: {window_text}")
 
         # Update Status
-        if self.broadcast_manager.is_within_time_window():
+        if self.config.get("test_mode", False):
+             self.status_label.setText("当前状态: [测试模式] 任意时间仅播报，不推送")
+             self.status_label.setStyleSheet("color: blue; font-weight: bold;")
+        elif self.broadcast_manager.is_within_time_window():
              self.status_label.setText("当前状态: [监测中] 播报时段内")
              self.status_label.setStyleSheet("color: green; font-weight: bold;")
         else:

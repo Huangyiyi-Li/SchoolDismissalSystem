@@ -6,6 +6,7 @@ import queue
 import os
 
 from .voice_text import build_dismissal_voice_text
+from .broadcast_mode import get_effective_window_signature
 
 class TTSWorker(QObject):
     finished = pyqtSignal()
@@ -153,7 +154,11 @@ class BroadcastManager(QObject):
             return
 
         # 2. Check Time Window (SECOND)
-        window_sig = self.get_current_window_signature()
+        is_test_mode = self.config.get("test_mode", False)
+        window_sig = get_effective_window_signature(
+            self.get_current_window_signature(),
+            is_test_mode,
+        )
         if not window_sig:
             self._log_event(card_id, class_name, "跳过", "非播报时段")
             return
@@ -192,7 +197,6 @@ class BroadcastManager(QObject):
 
         if should_push:
             # Check Test Mode
-            is_test_mode = self.config.get("test_mode", False)
             if self.api_service and class_id and not is_test_mode:
                 import threading
                 def push_api():

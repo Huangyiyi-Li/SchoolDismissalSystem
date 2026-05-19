@@ -5,15 +5,12 @@ import datetime
 class UDPServerService(QObject):
     # Signal to emit when a valid card is swiped: (card_id, ip_address)
     card_swiped = pyqtSignal(str, str)
-    # Signal to update device list in UI: (ip, last_activity, activity, name)
-    device_updated = pyqtSignal(str, str, str, str)
 
     def __init__(self, port=39169, db_manager=None):
         super().__init__()
         self.port = port
         self.db = db_manager
         self.socket = None
-        self.device_names = {}
         
     def start(self):
         self.socket = QUdpSocket(self)
@@ -85,7 +82,6 @@ class UDPServerService(QObject):
                     # Convert bytes to integer (little endian)
                     card_int = int.from_bytes(card_bytes, byteorder='little')
                     card_id_str = str(card_int)
-                    self._record_device_activity(ip)
                     
                     print(f"[UDP] Received Card ID: {card_id_str} (Hex: {card_bytes.hex().upper()}) from {ip} Seq:{seq_id}")
                     self.card_swiped.emit(card_id_str, ip)
@@ -95,15 +91,3 @@ class UDPServerService(QObject):
                 print(f"[UDP] Invalid Header {data[0]:02X} from {ip}")
         else:
             print(f"[UDP] Invalid Length {len(data)} from {ip}")
-
-    def _record_device_activity(self, ip):
-        now = datetime.datetime.now()
-        time_str = now.strftime("%H:%M:%S")
-
-        device_name = self.device_names.get(ip, ip)
-        if self.db:
-            self.db.upsert_device(ip, last_seen=now)
-            device_name = self.db.get_device_name(ip)
-            self.device_names[ip] = device_name
-
-        self.device_updated.emit(ip, time_str, "收到刷卡", device_name)
