@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QGroupBox, QTableWidget, QTableWidgetItem,
-                             QLabel, QHeaderView, QToolBar)
+                             QLabel, QHeaderView, QMessageBox, QToolBar)
 from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtCore import Qt, QTimer
 # Fix import paths assuming running from project root or having src in pythonpath
@@ -100,6 +100,10 @@ class MainWindow(QMainWindow):
         schedule_action = QAction("放学时间", self)
         schedule_action.triggered.connect(self.open_schedule_dialog)
         toolbar.addAction(schedule_action)
+
+        startup_action = QAction("开机自启", self)
+        startup_action.triggered.connect(self.enable_startup)
+        toolbar.addAction(startup_action)
         
         # Central Widget
         central = QWidget()
@@ -177,6 +181,14 @@ class MainWindow(QMainWindow):
         from .schedule_dialog import ScheduleDialog
         dialog = ScheduleDialog(self.config, self)
         dialog.exec()
+
+    def enable_startup(self):
+        from ..services.startup_task import enable_startup_task
+        result = enable_startup_task()
+        if result.success:
+            QMessageBox.information(self, result.title, result.message)
+        else:
+            QMessageBox.warning(self, result.title, result.message)
 
     def toggle_test_mode(self, state):
         is_test = (state == Qt.CheckState.Checked.value) or (state == 2) # Qt.CheckState or int
