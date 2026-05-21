@@ -7,6 +7,7 @@ import os
 
 from .voice_text import build_dismissal_voice_text
 from .broadcast_mode import get_effective_window_signature
+from .log_records import DISPLAY_TIMESTAMP_FORMAT
 
 class TTSWorker(QObject):
     finished = pyqtSignal()
@@ -230,11 +231,12 @@ class BroadcastManager(QObject):
         self.db.log_swipe(card_id, class_name, full_status)
         
         now = datetime.datetime.now()
+        timestamp = now.strftime(DISPLAY_TIMESTAMP_FORMAT)
         now_str = now.strftime("%H:%M:%S")
         date_str = now.strftime("%Y-%m-%d")
         
         # Emit Signal for UI
-        self.log_updated.emit(now_str, card_id, class_name, action, reason)
+        self.log_updated.emit(timestamp, card_id, class_name, action, reason)
         
         # File Logging
         try:

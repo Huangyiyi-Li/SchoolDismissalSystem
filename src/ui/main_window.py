@@ -6,6 +6,7 @@ from PyQt6.QtCore import Qt, QTimer
 # Fix import paths assuming running from project root or having src in pythonpath
 # For robustness in simple script execution, we might need sys.path hacks in main
 from .mapping_dialog import MappingDialog
+from ..services.log_records import format_log_timestamp
 
 class MainWindow(QMainWindow):
     def __init__(self, config_manager, db_manager, broadcast_manager, udp_server, data_sync_service=None):
@@ -138,9 +139,9 @@ class MainWindow(QMainWindow):
         
         # Updated Columns: Time, Card, Class, Action, Reason
         self.log_table.setColumnCount(5)
-        self.log_table.setHorizontalHeaderLabels(["时间", "卡号", "班级", "动作", "详细原因"])
+        self.log_table.setHorizontalHeaderLabels(["刷卡时间", "卡号", "班级", "动作", "详细原因"])
         self.log_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive) # Allow resize
-        self.log_table.setColumnWidth(0, 100) # Time
+        self.log_table.setColumnWidth(0, 170) # Time
         self.log_table.setColumnWidth(1, 100) # Card
         self.log_table.setColumnWidth(2, 100) # Class
         self.log_table.setColumnWidth(3, 120) # Action
@@ -194,9 +195,9 @@ class MainWindow(QMainWindow):
         else:
             self.test_mode_check.setStyleSheet("")
 
-    def add_log(self, time_str, card_id, class_name, action, reason=""):
+    def add_log(self, timestamp, card_id, class_name, action, reason=""):
         self.log_table.insertRow(0)
-        self.log_table.setItem(0, 0, QTableWidgetItem(time_str))
+        self.log_table.setItem(0, 0, QTableWidgetItem(format_log_timestamp(timestamp)))
         self.log_table.setItem(0, 1, QTableWidgetItem(card_id))
         self.log_table.setItem(0, 2, QTableWidgetItem(class_name))
         
@@ -210,18 +211,15 @@ class MainWindow(QMainWindow):
         self.log_table.setItem(0, 4, QTableWidgetItem(reason))
         
         # Limit rows
-        if self.log_table.rowCount() > 100:
-            self.log_table.removeRow(100)
+        if self.log_table.rowCount() > 500:
+            self.log_table.removeRow(500)
 
     def load_recent_logs(self):
-        logs = self.db.get_recent_logs()
-        for log in logs:
+        logs = self.db.get_recent_logs(limit=500)
+        for log in reversed(logs):
             # log format: (swipe_time, card_id, class_name, full_status)
             # full_status might be "Action (Reason)" or just "Action"
-            try:
-                dt = log[0].split(' ')[1]
-            except:
-                dt = log[0]
+            timestamp = format_log_timestamp(log[0])
             
             full_status = log[3]
             action = full_status
@@ -233,7 +231,7 @@ class MainWindow(QMainWindow):
                 action = parts[0]
                 reason = parts[1][:-1] # remove trailing )
                 
-            self.add_log(dt, log[1], log[2], action, reason)
+            self.add_log(timestamp, log[1], log[2], action, reason)
 
     def update_status_bar(self):
         # Update Time Window Display

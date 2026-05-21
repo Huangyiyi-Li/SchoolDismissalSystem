@@ -168,7 +168,7 @@ class DatabaseManager:
         conn.commit()
         conn.close()
 
-    def get_recent_logs(self, limit=50):
+    def get_recent_logs(self, limit=500):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("SELECT swipe_time, card_id, class_name, status FROM logs ORDER BY id DESC LIMIT ?", (limit,))
