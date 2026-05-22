@@ -1,6 +1,10 @@
 import unittest
 
-from src.services.startup_task import build_register_startup_task_script, quote_powershell_string
+from src.services.startup_task import (
+    build_register_startup_task_script,
+    build_startup_vbs_script,
+    quote_powershell_string,
+)
 
 
 class StartupTaskTests(unittest.TestCase):
@@ -21,6 +25,20 @@ class StartupTaskTests(unittest.TestCase):
         self.assertIn("Register-ScheduledTask", script)
         self.assertIn("-TaskName 'SchoolDismissalSystem'", script)
         self.assertIn("-Force", script)
+
+    def test_startup_vbs_sets_working_directory_and_delays_launch(self):
+        script = build_startup_vbs_script(
+            executable_path=r"D:\SchoolDismissalSystem\SchoolDismissalSystem.exe",
+            working_directory=r"D:\SchoolDismissalSystem",
+            delay_milliseconds=30000,
+        )
+
+        self.assertIn("WScript.Sleep 30000", script)
+        self.assertIn('WshShell.CurrentDirectory = "D:\\SchoolDismissalSystem"', script)
+        self.assertIn(
+            'WshShell.Run """D:\\SchoolDismissalSystem\\SchoolDismissalSystem.exe"""',
+            script,
+        )
 
 
 if __name__ == "__main__":
