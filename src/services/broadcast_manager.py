@@ -7,6 +7,7 @@ import os
 
 from .voice_text import build_dismissal_voice_text
 from .broadcast_mode import get_effective_window_signature
+from .dismissal_window import get_active_window_signature
 from .log_records import DISPLAY_TIMESTAMP_FORMAT
 
 class TTSWorker(QObject):
@@ -90,6 +91,7 @@ class BroadcastManager(QObject):
         # Deduplication state
         self.voice_history = {}
         self.api_push_history = {}
+        self.manual_command_history = set()
         
         # TTS Thread
         self.tts_thread = QThread()
@@ -98,57 +100,24 @@ class BroadcastManager(QObject):
         self.tts_thread.started.connect(self.tts_worker.run)
         self.tts_thread.start()
 
-    def get_current_window_signature(self):
+    def get_current_window_signature(self, class_type=None):
         """
         Returns a unique string for the current active time window, e.g. 'Weekday-1_08:30-18:30'.
         Returns None if not in any window.
         """
-        # 1. Check Dynamic Schedule
-        schedules = self.config.get("schedules")
-        if schedules:
-            current_weekday = datetime.datetime.now().weekday() + 1
-            now_time = datetime.datetime.now().time()
-            
-            today_rules = [s for s in schedules if s.get("weekday") == current_weekday]
-            for rule in today_rules:
-                ranges = rule.get("timeRanges", [])
-                for r in ranges:
-                    try:
-                        start_str = r.get("startTime")
-                        end_str = r.get("endTime")
-                        start_t = datetime.datetime.strptime(start_str, "%H:%M").time()
-                        end_t = datetime.datetime.strptime(end_str, "%H:%M").time()
-                        
-                        if start_t <= now_time <= end_t:
-                            return f"WD{current_weekday}_{start_str}-{end_str}"
-                    except Exception as e:
-                        print(f"[TimeCheck] Parse Error: {e}")
-                        continue
-            
-            # If dynamic schedules exist but no match, return None (don't fallback to static if dynamic present?)
-            # Assuming strictly following schedules if present.
-            return None
-
-        # 2. Fallback to Static Config
-        try:
-            start_str = self.config.get("time_window_start", "16:30")
-            end_str = self.config.get("time_window_end", "18:30")
-            start_time = datetime.datetime.strptime(start_str, "%H:%M").time()
-            end_time = datetime.datetime.strptime(end_str, "%H:%M").time()
-            now = datetime.datetime.now().time()
-            
-            if start_time <= now <= end_time:
-                return f"Static_{start_str}-{end_str}"
-        except:
-            pass
-            
-        return None
+        return get_active_window_signature(
+            self.config.get("schedules"),
+            self.config.get("time_window_start", "16:30"),
+            self.config.get("time_window_end", "18:30"),
+            class_type=class_type,
+        )
 
     def process_swipe(self, card_id, ip):
         # 1. Lookup Class (FIRST)
         class_info = self.db.get_class_info_by_card(card_id)
         class_name = class_info[0]
         class_id = class_info[1]
+        class_type = class_info[3]
         
         if not class_name:
             self._log_event(card_id, "未知", "跳过", "无效卡号")
@@ -157,7 +126,7 @@ class BroadcastManager(QObject):
         # 2. Check Time Window (SECOND)
         is_test_mode = self.config.get("test_mode", False)
         window_sig = get_effective_window_signature(
-            self.get_current_window_signature(),
+            self.get_current_window_signature(class_type=class_type),
             is_test_mode,
         )
         if not window_sig:
@@ -202,7 +171,13 @@ class BroadcastManager(QObject):
                 import threading
                 def push_api():
                      print(f"[Debug] Spawning API Push Thread for Class {class_id}")
-                     self.api_service.push_dismissal_notice(class_id, card_id, 1)
+                     self.api_service.push_dismissal_notice(
+                         class_id,
+                         card_id,
+                         dismissal_status=1,
+                         class_type=class_type,
+                         trigger_type=1,
+                     )
                 threading.Thread(target=push_api, daemon=True).start()
                 self.api_push_history[card_id] = datetime.datetime.now()
                 if "播报" in action:
@@ -221,6 +196,63 @@ class BroadcastManager(QObject):
         # Log Result
         print(f"[Debug] Process Result: {action} - {reason}")
         self._log_event(card_id, class_name, action, reason)
+
+    def process_manual_dismissal(self, params):
+        class_id = str(params.get("classId") or "").strip()
+        class_type = params.get("classType")
+        teacher_id = params.get("triggerTeacherId")
+        teacher_name = params.get("triggerTeacherName") or params.get("trigger_teacher_name")
+
+        if not class_id:
+            return {"result": "fail", "message": "classId is required"}
+
+        command_key = "|".join(
+            [
+                str(params.get("commandId") or ""),
+                str(class_type or ""),
+                class_id,
+                str(teacher_id or ""),
+                str(teacher_name or ""),
+            ]
+        )
+        if command_key in self.manual_command_history:
+            return {"result": "success"}
+        self.manual_command_history.add(command_key)
+
+        class_info = self.db.get_class_info_by_class(class_id, class_type)
+        class_name = (
+            params.get("classVoiceName")
+            or params.get("classShowName")
+            or class_info[5]
+            or class_info[4]
+            or class_info[0]
+            or f"班级{class_id}"
+        )
+
+        message = build_dismissal_voice_text(class_name)
+        self.tts_worker.add_text(message)
+        reason = "服务端指令"
+        if teacher_name:
+            reason += f"/{teacher_name}"
+        self._log_event(class_id, class_name, "语音播报", reason)
+
+        if self.api_service:
+            import threading
+
+            def push_api():
+                self.api_service.push_dismissal_notice(
+                    class_id,
+                    None,
+                    dismissal_status=params.get("dismissalStatus", 1),
+                    class_type=class_type,
+                    trigger_type=2,
+                    trigger_teacher_id=teacher_id,
+                    trigger_teacher_name=teacher_name,
+                )
+
+            threading.Thread(target=push_api, daemon=True).start()
+
+        return {"result": "success"}
 
     def is_within_time_window(self):
         return self.get_current_window_signature() is not None

@@ -1,5 +1,6 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QLineEdit, QPushButton, QMessageBox, QFormLayout)
+                             QLineEdit, QPushButton, QMessageBox, QFormLayout,
+                             QCheckBox)
 from PyQt6.QtCore import Qt
 
 class SettingsDialog(QDialog):
@@ -21,6 +22,20 @@ class SettingsDialog(QDialog):
         self.school_id_edit.setText(self.config.get("school_id", ""))
         self.school_id_edit.setPlaceholderText("请输入学校ID (如 40125)")
         form_layout.addRow("学校 ID:", self.school_id_edit)
+
+        self.api_base_url_edit = QLineEdit()
+        self.api_base_url_edit.setText(self.config.get("api_base_url", "https://rest.xxt.cn"))
+        self.api_base_url_edit.setPlaceholderText("https://rest.xxt.cn 或 https://rest-test.xxt.cn")
+        form_layout.addRow("接口地址:", self.api_base_url_edit)
+
+        self.device_no_edit = QLineEdit()
+        self.device_no_edit.setText(self.config.get("device_no", ""))
+        self.device_no_edit.setPlaceholderText("MQTT 设备编号，留空则下次启动自动生成")
+        form_layout.addRow("设备编号:", self.device_no_edit)
+
+        self.mqtt_enabled_check = QCheckBox("启用 MQTT 心跳/指令")
+        self.mqtt_enabled_check.setChecked(self.config.get("mqtt_enabled", True))
+        form_layout.addRow("MQTT:", self.mqtt_enabled_check)
         
         # UDP Port
         self.port_edit = QLineEdit()
@@ -52,6 +67,8 @@ class SettingsDialog(QDialog):
 
     def save_settings(self):
         new_school_id = self.school_id_edit.text().strip()
+        api_base_url = self.api_base_url_edit.text().strip().rstrip("/")
+        device_no = self.device_no_edit.text().strip()
         port_str = self.port_edit.text().strip()
 
         if not new_school_id:
@@ -66,19 +83,26 @@ class SettingsDialog(QDialog):
 
         # Check if School ID changed
         old_school_id = self.config.get("school_id")
+        old_api_base_url = self.config.get("api_base_url", "https://rest.xxt.cn")
         school_id_changed = new_school_id != old_school_id
+        api_base_url_changed = (api_base_url or "https://rest.xxt.cn") != old_api_base_url
 
         self.config.set("school_id", new_school_id)
+        self.config.set("api_base_url", api_base_url or "https://rest.xxt.cn")
+        self.config.set("device_no", device_no)
+        self.config.set("mqtt_enabled", self.mqtt_enabled_check.isChecked())
         self.config.set("udp_port", port)
         # Time settings removed
         self.config.save()
+        if self.sync_service and self.sync_service.api:
+            self.sync_service.api.school_id = new_school_id
+            self.sync_service.api.base_url = self.config.get("api_base_url", "https://rest.xxt.cn")
         
         msg = "设置已保存。"
-        if school_id_changed:
-            msg += "\n\n检测到学校 ID 已变更，正在尝试应用并同步..."
+        if school_id_changed or api_base_url_changed:
+            msg += "\n\n检测到学校 ID 或接口地址已变更，正在尝试应用并同步..."
             # Apply to runtime service
             if self.sync_service and self.sync_service.api:
-                self.sync_service.api.school_id = new_school_id
                 # Trigger sync
                 self.trigger_sync(silent=True)
                 msg += "\n后台同步已触发。请关注主界面日志。"

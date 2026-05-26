@@ -1,5 +1,49 @@
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QThread
-import time
+try:
+    from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QThread
+except ImportError:
+    class QObject:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def moveToThread(self, thread):
+            pass
+
+    class _Signal:
+        def __init__(self):
+            self._callbacks = []
+
+        def connect(self, callback):
+            self._callbacks.append(callback)
+
+        def emit(self, *args, **kwargs):
+            for callback in self._callbacks:
+                callback(*args, **kwargs)
+
+    def pyqtSignal(*args, **kwargs):
+        return _Signal()
+
+    class QTimer:
+        def __init__(self, *args, **kwargs):
+            self.timeout = _Signal()
+
+        def start(self, interval):
+            self.interval = interval
+
+        def stop(self):
+            pass
+
+    class QThread:
+        def __init__(self):
+            self.started = _Signal()
+
+        def start(self):
+            self.started.emit()
+
+        def quit(self):
+            pass
+
+        def wait(self):
+            pass
 
 class DataSyncWorker(QObject):
     finished = pyqtSignal()
@@ -44,6 +88,9 @@ class DataSyncWorker(QObject):
                 # Fallback to className if classVoiceName is missing
                 class_name = cls.get("classVoiceName") or cls.get("className")
                 class_id = cls.get("classId")
+                class_type = cls.get("classType")
+                class_show_name = cls.get("classShowName")
+                class_voice_name = cls.get("classVoiceName")
                 
                 if card_id_raw and class_name:
                     # If card_id_raw is comma separated or list?
@@ -56,8 +103,19 @@ class DataSyncWorker(QObject):
                         cards = [str(card_id_raw)]
                         
                     for c_id in cards:
+                        clean_card_id = str(c_id).strip()
+                        if not clean_card_id:
+                            continue
                         # Pass school_id (from API Service config) to DB
-                        self.db.add_mapping(c_id, class_name, class_id, school_id=self.api.school_id)
+                        self.db.add_mapping(
+                            clean_card_id,
+                            class_name,
+                            class_id,
+                            school_id=self.api.school_id,
+                            class_type=class_type,
+                            class_show_name=class_show_name,
+                            class_voice_name=class_voice_name,
+                        )
                         count += 1
             print(f"[Sync] Synced {count} card mappings.")
 

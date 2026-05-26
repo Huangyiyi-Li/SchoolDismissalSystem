@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QTimer
 # For robustness in simple script execution, we might need sys.path hacks in main
 from .mapping_dialog import MappingDialog
 from ..services.log_records import format_log_timestamp
+from ..services.dismissal_window import format_window_label
 
 class MainWindow(QMainWindow):
     def __init__(self, config_manager, db_manager, broadcast_manager, udp_server, data_sync_service=None):
@@ -248,24 +249,11 @@ class MainWindow(QMainWindow):
     def update_status_bar(self):
         # Update Time Window Display
         schedules = self.config.get("schedules")
-        window_text = "默认: " + f"{self.config.get('time_window_start')} - {self.config.get('time_window_end')}"
-        
-        if schedules:
-            import datetime
-            current_weekday = datetime.datetime.now().weekday() + 1
-            today_rules = [s for s in schedules if s.get("weekday") == current_weekday]
-            if today_rules:
-                ranges_str_list = []
-                for rule in today_rules:
-                    for r in rule.get("timeRanges", []):
-                        start = r.get("startTime")
-                        end = r.get("endTime")
-                        # Filter out empty/zero times if any
-                        if start != "00:00" or end != "00:00":
-                             ranges_str_list.append(f"{start}-{end}")
-                
-                if ranges_str_list:
-                    window_text = "今日: " + ", ".join(ranges_str_list)
+        window_text = format_window_label(
+            schedules,
+            self.config.get("time_window_start", "16:30"),
+            self.config.get("time_window_end", "18:30"),
+        )
 
         self.window_label.setText(f"播报时段: {window_text}")
 

@@ -36,11 +36,24 @@ class ScheduleDialog(QDialog):
         # Requirement said "Monday to Thursday", but let's show all available.
         
         has_data = False
-        sorted_schedules = sorted(schedules, key=lambda x: x.get("weekday", 0))
+        display_items = []
+        for item in schedules:
+            if "schedules" in item:
+                class_type = item.get("classType")
+                for rule in item.get("schedules", []):
+                    rule_copy = dict(rule)
+                    rule_copy["classType"] = class_type
+                    display_items.append(rule_copy)
+            else:
+                display_items.append(item)
+
+        sorted_schedules = sorted(display_items, key=lambda x: (x.get("weekday", 0), x.get("classType", 0)))
 
         for item in sorted_schedules:
             wd = item.get("weekday")
             name = weekdays.get(wd, f"周{wd}")
+            if item.get("classType") is not None:
+                name = f"{name} 类型{item.get('classType')}"
             
             tab = QWidget()
             tab_layout = QVBoxLayout(tab)

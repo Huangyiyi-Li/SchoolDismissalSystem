@@ -7,8 +7,8 @@
 * **UDP 刷卡监听**: 监听端口 `39169`，实时接收刷卡机 UDP 数据包。
 * **智能协议解析**: 自动解析 UDP 数据包中的 10-13 字节（小端序）作为物理卡号。
 * **本地/云端双模**:
-  * 支持从云端 API 同步班级与卡号映射关系。
-  * 支持从云端 API 获取每日放学时间表。
+  * 支持从 2.0 云端 API 同步班级、班级类型与卡号映射关系。
+  * 支持从 2.0 云端 API 获取按班级类型分组的每日放学时间表。
   * 所有数据本地缓存（SQLite + JSON），断网不影响基础播报。
 * **语音播报 (TTS)**: 使用 `pyttsx3` 引擎，支持多线程防阻塞播报，自动重试。
 * **智能去重**: 可配置去重时间窗口，避免短时间内重复刷卡造成的重复播报。
@@ -16,15 +16,18 @@
   * **实时日志**: 显示详细的刷卡、解析、API 交互日志。
   * **系统状态**: 显示当前放学时段与测试模式状态。
 * **API 集成**:
-  * 自动同步学校班级数据。
-  * 刷卡成功后自动向云端推送放学通知。
+  * 自动同步学校班级数据和放学时间表。
+  * 刷卡成功后自动通过 2.0 接口向云端推送放学通知。
+* **MQTT 联动**:
+  * 软件启动后按设备编号每 60 秒上报客户端在线心跳。
+  * 接收云端 `ManualDismissal` 指令后立即触发本地语音播报，并回复处理结果。
 
 ## 🛠 技术栈
 
 * **编程语言**: Python 3.10+
 * **GUI 框架**: PyQt6
 * **语音引擎**: pyttsx3 (SAPI5 on Windows)
-* **网络通讯**: socket (UDP), requests (HTTP)
+* **网络通讯**: socket (UDP), requests (HTTP), paho-mqtt (MQTT)
 * **数据存储**: SQLite3, JSON
 
 ## 🚀 快速开始
@@ -43,6 +46,8 @@ pip install -r requirements.txt
 
 * `school_id`: 您的学校 ID (用于 API 通讯)。
 * `udp_port`: UDP 监听端口 (默认 39169)。
+* `api_base_url`: API 地址，测试环境为 `https://rest-test.xxt.cn`，正式环境为 `https://rest.xxt.cn`。
+* `device_no`: MQTT 设备编号；留空时程序启动会自动生成并保存。
 
 ### 3. 运行程序
 
@@ -78,10 +83,16 @@ root/
 
 ## 📝 API 接口说明
 
-系统对接 `rest.xxt.cn` 接口：
-* `get-classes`: 获取班级列表。
-* `push-dismissal-notice`: 推送放学通知。
-* `get-school-dismissal-schedule`: 获取放学时间表。
+系统对接 `rest.xxt.cn` / `rest-test.xxt.cn` 的 2.0 接口：
+* `get-classes-v2`: 获取班级列表。
+* `push-dismissal-notice-v2`: 推送放学通知。
+* `get-school-dismissal-schedule-v2`: 获取放学时间表。
+
+MQTT 默认连接 `111.6.173.61:1883`，用户名和 client-id 均使用本机 `device_no`。心跳上行 topic 为 `v1/devices/me/telemetry`；下发放学指令订阅 `v1/devices/me/rpc/request/+`；回执 topic 为 `v1/devices/me/rpc/response/{request_id}`。
+
+## 📌 项目 TODO
+
+后续优化项统一维护在 [TODO.md](TODO.md)。
 
 ## ⚠️ 注意事项
 

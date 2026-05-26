@@ -5,10 +5,18 @@ class ConfigManager:
     _instance = None
     DEFAULT_CONFIG = {
         "udp_port": 39169,
+        "api_base_url": "https://rest.xxt.cn",
         "time_window_start": "16:30",
         "time_window_end": "18:30",
         "broadcast_count": 3,
-        "deduplication_interval_seconds": 300
+        "deduplication_interval_seconds": 300,
+        "mqtt_enabled": True,
+        "mqtt_host": "111.6.173.61",
+        "mqtt_port": 1883,
+        "mqtt_heartbeat_interval_seconds": 60,
+        "mqtt_telemetry_topic": "v1/devices/me/telemetry",
+        "mqtt_rpc_request_topic": "v1/devices/me/rpc/request/+",
+        "mqtt_rpc_response_topic_template": "v1/devices/me/rpc/response/{request_id}"
     }
 
     def __new__(cls, config_path=None):

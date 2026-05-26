@@ -27,7 +27,10 @@ class DatabaseManager:
                 card_id TEXT UNIQUE NOT NULL,
                 class_name TEXT NOT NULL,
                 class_id TEXT,
-                school_id TEXT
+                school_id TEXT,
+                class_type INTEGER,
+                class_show_name TEXT,
+                class_voice_name TEXT
             )
         ''')
         
@@ -46,6 +49,24 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE mapping ADD COLUMN school_id TEXT")
             except Exception as e:
                 print(f"[DB] Migration Error (school_id): {e}")
+
+        if "class_type" not in columns:
+            try:
+                cursor.execute("ALTER TABLE mapping ADD COLUMN class_type INTEGER")
+            except Exception as e:
+                print(f"[DB] Migration Error (class_type): {e}")
+
+        if "class_show_name" not in columns:
+            try:
+                cursor.execute("ALTER TABLE mapping ADD COLUMN class_show_name TEXT")
+            except Exception as e:
+                print(f"[DB] Migration Error (class_show_name): {e}")
+
+        if "class_voice_name" not in columns:
+            try:
+                cursor.execute("ALTER TABLE mapping ADD COLUMN class_voice_name TEXT")
+            except Exception as e:
+                print(f"[DB] Migration Error (class_voice_name): {e}")
 
         # Devices table
         cursor.execute('''
@@ -114,28 +135,86 @@ class DatabaseManager:
         return row[0] if row else ip
 
     def get_class_info_by_card(self, card_id):
-        """Returns tuple (class_name, class_id, school_id)"""
+        """Returns tuple (class_name, class_id, school_id, class_type, class_show_name, class_voice_name)."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT class_name, class_id, school_id FROM mapping WHERE card_id = ?", (card_id,))
+        cursor.execute(
+            """
+            SELECT class_name, class_id, school_id, class_type, class_show_name, class_voice_name
+            FROM mapping
+            WHERE card_id = ?
+            """,
+            (card_id,),
+        )
         result = cursor.fetchone()
         conn.close()
-        # Ensure we return 3 elements
         if result:
             return result # (name, class_id, school_id)
-        return (None, None, None)
+        return (None, None, None, None, None, None)
+
+    def get_class_info_by_class(self, class_id, class_type=None):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        if class_type is None:
+            cursor.execute(
+                """
+                SELECT class_name, class_id, school_id, class_type, class_show_name, class_voice_name
+                FROM mapping
+                WHERE class_id = ?
+                LIMIT 1
+                """,
+                (class_id,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT class_name, class_id, school_id, class_type, class_show_name, class_voice_name
+                FROM mapping
+                WHERE class_id = ? AND class_type = ?
+                LIMIT 1
+                """,
+                (class_id, class_type),
+            )
+        result = cursor.fetchone()
+        conn.close()
+        if result:
+            return result
+        return (None, class_id, None, class_type, None, None)
 
     def get_class_by_card(self, card_id):
         # Backward compatibility
         info = self.get_class_info_by_card(card_id)
         return info[0]
 
-    def add_mapping(self, card_id, class_name, class_id=None, school_id=None):
+    def add_mapping(
+        self,
+        card_id,
+        class_name,
+        class_id=None,
+        school_id=None,
+        class_type=None,
+        class_show_name=None,
+        class_voice_name=None,
+    ):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         try:
-            cursor.execute("INSERT OR REPLACE INTO mapping (card_id, class_name, class_id, school_id) VALUES (?, ?, ?, ?)", 
-                          (card_id, class_name, class_id, school_id))
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO mapping
+                    (card_id, class_name, class_id, school_id, class_type, class_show_name, class_voice_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    card_id,
+                    class_name,
+                    class_id,
+                    school_id,
+                    class_type,
+                    class_show_name,
+                    class_voice_name,
+                ),
+            )
             conn.commit()
             return True
         except Exception as e:
