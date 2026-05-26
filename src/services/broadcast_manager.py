@@ -226,8 +226,11 @@ class BroadcastManager(QObject):
             or class_info[5]
             or class_info[4]
             or class_info[0]
-            or f"班级{class_id}"
         )
+
+        if not class_name:
+            self._log_event(class_id, "未知班级", "跳过", "服务端指令缺少班级信息")
+            return {"result": "fail", "message": f"class not found: {class_id}"}
 
         message = build_dismissal_voice_text(class_name)
         self.tts_worker.add_text(message)
