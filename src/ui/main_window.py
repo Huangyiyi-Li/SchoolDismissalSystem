@@ -118,8 +118,9 @@ class MainWindow(QMainWindow):
         status_group = QGroupBox("系统状态")
         status_layout = QVBoxLayout()
         window_str = f"{self.config.get('time_window_start')} - {self.config.get('time_window_end')}"
-        self.window_label = QLabel(f"播报时段: {window_str}")
+        self.window_label = QLabel(f"播报时段:\n{window_str}")
         self.window_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self.window_label.setWordWrap(True)
         self.status_label = QLabel("当前状态: 初始化...")
         
         # Test Mode Checkbox
@@ -255,7 +256,7 @@ class MainWindow(QMainWindow):
             self.config.get("time_window_end", "18:30"),
         )
 
-        self.window_label.setText(f"播报时段: {window_text}")
+        self.window_label.setText(f"播报时段:\n{window_text}")
 
         # Update Status
         if self.config.get("test_mode", False):

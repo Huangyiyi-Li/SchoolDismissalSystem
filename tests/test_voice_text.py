@@ -7,6 +7,7 @@ class VoiceTextTests(unittest.TestCase):
     def test_decimal_style_class_name_reads_as_grade_and_class(self):
         self.assertEqual(normalize_class_name_for_speech("4.7班"), "四年级七班")
         self.assertEqual(normalize_class_name_for_speech("5.15 班"), "五年级十五班")
+        self.assertEqual(normalize_class_name_for_speech("数智家校 1.1 班"), "数智家校一年级一班")
 
     def test_build_dismissal_voice_text_uses_speech_friendly_class_name(self):
         self.assertEqual(build_dismissal_voice_text("4.7班"), "四年级七班正在放学")

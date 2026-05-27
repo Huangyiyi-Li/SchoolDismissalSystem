@@ -2,7 +2,7 @@ import re
 
 
 _DIGITS = "零一二三四五六七八九"
-_DECIMAL_CLASS_RE = re.compile(r"^\s*(\d{1,2})\s*[.．]\s*(\d{1,2})\s*班?\s*$")
+_DECIMAL_CLASS_RE = re.compile(r"(?<!\d)\s*(\d{1,2})\s*[.．]\s*(\d{1,2})\s*班")
 
 
 def _to_chinese_number(value):
@@ -22,12 +22,11 @@ def normalize_class_name_for_speech(class_name):
     if not class_name:
         return class_name
 
-    match = _DECIMAL_CLASS_RE.match(str(class_name))
-    if not match:
-        return class_name
+    def replace_decimal_class(match):
+        grade, class_no = match.groups()
+        return f"{_to_chinese_number(grade)}年级{_to_chinese_number(class_no)}班"
 
-    grade, class_no = match.groups()
-    return f"{_to_chinese_number(grade)}年级{_to_chinese_number(class_no)}班"
+    return _DECIMAL_CLASS_RE.sub(replace_decimal_class, str(class_name))
 
 
 def build_dismissal_voice_text(class_name):

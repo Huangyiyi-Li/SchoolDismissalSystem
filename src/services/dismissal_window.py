@@ -3,6 +3,17 @@ from __future__ import annotations
 import datetime as dt
 
 
+_WEEKDAY_NAMES = {
+    1: "星期一",
+    2: "星期二",
+    3: "星期三",
+    4: "星期四",
+    5: "星期五",
+    6: "星期六",
+    7: "星期日",
+}
+
+
 def _parse_clock(value: str) -> dt.time:
     return dt.datetime.strptime(value, "%H:%M").time()
 
@@ -93,5 +104,6 @@ def format_window_label(schedules, fallback_start, fallback_end, now=None, class
                 if label not in today_ranges:
                     today_ranges.append(label)
     if today_ranges:
-        return "今日: " + ", ".join(today_ranges)
+        date_label = f"{now.year} 年 {now.month} 月 {now.day} 日 {_WEEKDAY_NAMES[current_weekday]}"
+        return "\n".join([date_label, *today_ranges])
     return f"默认: {fallback_start} - {fallback_end}"

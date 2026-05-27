@@ -62,7 +62,7 @@ class DismissalWindowTests(unittest.TestCase):
             now=now,
         )
 
-        self.assertEqual(label, "今日: 08:00-08:30, 12:00-12:30")
+        self.assertEqual(label, "2026 年 4 月 21 日 星期二\n08:00-08:30\n12:00-12:30")
 
     def test_static_window_still_works_without_schedule(self):
         now = datetime.datetime(2026, 4, 21, 17, 15)
@@ -96,4 +96,3 @@ class DismissalWindowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
