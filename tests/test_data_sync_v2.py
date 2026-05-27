@@ -73,6 +73,23 @@ class DataSyncV2Tests(unittest.TestCase):
                 ("足球社团", "201", "40125", 2, "足球社团", "足球社团"),
             )
 
+    def test_sync_classes_clears_mappings_for_previous_school(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseManager(db_path=os.path.join(tmpdir, "school.db"))
+            db.add_mapping(
+                "OLD",
+                "旧学校班级",
+                class_id="old-1",
+                school_id="old-school",
+                class_type=1,
+            )
+            worker = DataSyncWorker(FakeApi(), db, FakeConfig())
+
+            worker.sync_classes(clear_existing=True)
+
+            self.assertEqual(db.get_class_info_by_card("OLD")[0], None)
+            self.assertEqual(db.get_class_info_by_card("A1")[2], "40125")
+
     def test_sync_schedule_saves_v2_grouped_schedule(self):
         config = FakeConfig()
         worker = DataSyncWorker(FakeApi(), object(), config)

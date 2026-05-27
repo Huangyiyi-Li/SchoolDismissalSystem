@@ -7,7 +7,8 @@ from PyQt6.QtCore import Qt, QTimer
 # For robustness in simple script execution, we might need sys.path hacks in main
 from .mapping_dialog import MappingDialog
 from ..services.log_records import format_log_timestamp
-from ..services.dismissal_window import format_window_label
+from ..services.class_types import format_class_type_label
+from ..services.dismissal_window import format_grouped_window_label
 
 class MainWindow(QMainWindow):
     def __init__(self, config_manager, db_manager, broadcast_manager, udp_server, data_sync_service=None):
@@ -143,15 +144,15 @@ class MainWindow(QMainWindow):
         log_layout = QVBoxLayout()
         self.log_table = QTableWidget()
         
-        # Updated Columns: Time, Card, Class, Action, Reason
-        self.log_table.setColumnCount(5)
-        self.log_table.setHorizontalHeaderLabels(["刷卡时间", "卡号", "班级", "动作", "详细原因"])
+        self.log_table.setColumnCount(6)
+        self.log_table.setHorizontalHeaderLabels(["时间", "来源", "类型", "名称", "动作", "详细原因"])
         self.log_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive) # Allow resize
         self.log_table.setColumnWidth(0, 170) # Time
-        self.log_table.setColumnWidth(1, 100) # Card
-        self.log_table.setColumnWidth(2, 100) # Class
-        self.log_table.setColumnWidth(3, 120) # Action
-        self.log_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch) # Reason fills rest
+        self.log_table.setColumnWidth(1, 140) # Source
+        self.log_table.setColumnWidth(2, 90) # Type
+        self.log_table.setColumnWidth(3, 140) # Name
+        self.log_table.setColumnWidth(4, 120) # Action
+        self.log_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch) # Reason fills rest
         
         log_layout.addWidget(self.log_table)
         log_group.setLayout(log_layout)
@@ -209,11 +210,12 @@ class MainWindow(QMainWindow):
         else:
             self.test_mode_check.setStyleSheet("")
 
-    def add_log(self, timestamp, card_id, class_name, action, reason=""):
+    def add_log(self, timestamp, source, target_type, target_name, action, reason=""):
         self.log_table.insertRow(0)
         self.log_table.setItem(0, 0, QTableWidgetItem(format_log_timestamp(timestamp)))
-        self.log_table.setItem(0, 1, QTableWidgetItem(card_id))
-        self.log_table.setItem(0, 2, QTableWidgetItem(class_name))
+        self.log_table.setItem(0, 1, QTableWidgetItem(source))
+        self.log_table.setItem(0, 2, QTableWidgetItem(target_type))
+        self.log_table.setItem(0, 3, QTableWidgetItem(target_name))
         
         action_item = QTableWidgetItem(action)
         if "播报" in action:
@@ -221,21 +223,33 @@ class MainWindow(QMainWindow):
         elif "跳过" in action:
             action_item.setForeground(QColor("orange"))
             
-        self.log_table.setItem(0, 3, action_item)
-        self.log_table.setItem(0, 4, QTableWidgetItem(reason))
+        self.log_table.setItem(0, 4, action_item)
+        self.log_table.setItem(0, 5, QTableWidgetItem(reason))
         
         # Limit rows
         if self.log_table.rowCount() > 500:
             self.log_table.removeRow(500)
 
     def load_recent_logs(self):
-        logs = self.db.get_recent_logs(limit=500)
+        if hasattr(self.db, "get_recent_log_records"):
+            logs = self.db.get_recent_log_records(limit=500)
+        else:
+            logs = []
+            for log in self.db.get_recent_logs(limit=500):
+                logs.append(
+                    {
+                        "timestamp": log[0],
+                        "source": "刷卡",
+                        "source_detail": log[1],
+                        "class_type": None,
+                        "class_name": log[2],
+                        "status": log[3],
+                    }
+                )
         for log in reversed(logs):
-            # log format: (swipe_time, card_id, class_name, full_status)
-            # full_status might be "Action (Reason)" or just "Action"
-            timestamp = format_log_timestamp(log[0])
+            timestamp = format_log_timestamp(log["timestamp"])
             
-            full_status = log[3]
+            full_status = log["status"]
             action = full_status
             reason = ""
             
@@ -245,12 +259,22 @@ class MainWindow(QMainWindow):
                 action = parts[0]
                 reason = parts[1][:-1] # remove trailing )
                 
-            self.add_log(timestamp, log[1], log[2], action, reason)
+            source = log["source"]
+            if source == "刷卡" and log["source_detail"]:
+                source = f"刷卡 {log['source_detail']}"
+            self.add_log(
+                timestamp,
+                source,
+                format_class_type_label(log.get("class_type")),
+                log["class_name"],
+                action,
+                reason,
+            )
 
     def update_status_bar(self):
         # Update Time Window Display
         schedules = self.config.get("schedules")
-        window_text = format_window_label(
+        window_text = format_grouped_window_label(
             schedules,
             self.config.get("time_window_start", "16:30"),
             self.config.get("time_window_end", "18:30"),
@@ -262,8 +286,12 @@ class MainWindow(QMainWindow):
         if self.config.get("test_mode", False):
              self.status_label.setText("当前状态: [测试模式] 任意时间仅播报，不推送")
              self.status_label.setStyleSheet("color: blue; font-weight: bold;")
-        elif self.broadcast_manager.is_within_time_window():
-             self.status_label.setText("当前状态: [监测中] 播报时段内")
+        elif self.broadcast_manager.is_within_time_window(class_type=1) or self.broadcast_manager.is_within_time_window(class_type=2):
+             states = []
+             for class_type in (1, 2):
+                 state = "监测中" if self.broadcast_manager.is_within_time_window(class_type=class_type) else "待机"
+                 states.append(f"{format_class_type_label(class_type)}{state}")
+             self.status_label.setText("当前状态: " + " / ".join(states))
              self.status_label.setStyleSheet("color: green; font-weight: bold;")
         else:
              self.status_label.setText("当前状态: [待机] 非播报时段")

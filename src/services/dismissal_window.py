@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import datetime as dt
 
+from .class_types import format_class_type_section_title
+from .schedule_display import is_usable_range
+
 
 _WEEKDAY_NAMES = {
     1: "星期一",
@@ -31,10 +34,7 @@ def _iter_schedule_rules(schedules, class_type=None):
 
 
 def _is_usable_range(time_range):
-    return not (
-        time_range.get("startTime") == "00:00"
-        and time_range.get("endTime") == "00:00"
-    )
+    return is_usable_range(time_range)
 
 
 def get_active_window_signature(
@@ -107,3 +107,42 @@ def format_window_label(schedules, fallback_start, fallback_end, now=None, class
         date_label = f"{now.year} 年 {now.month} 月 {now.day} 日 {_WEEKDAY_NAMES[current_weekday]}"
         return "\n".join([date_label, *today_ranges])
     return f"默认: {fallback_start} - {fallback_end}"
+
+
+def format_grouped_window_label(schedules, fallback_start, fallback_end, now=None):
+    now = now or dt.datetime.now()
+    current_weekday = now.weekday() + 1
+    date_label = f"{now.year} 年 {now.month} 月 {now.day} 日 {_WEEKDAY_NAMES[current_weekday]}"
+    sections = [date_label]
+
+    for class_type in (1, 2):
+        section_lines = [format_class_type_section_title(class_type)]
+        ranges = []
+        for rule in _iter_schedule_rules(schedules, class_type=class_type):
+            if rule.get("weekday") != current_weekday:
+                continue
+            for time_range in rule.get("timeRanges") or []:
+                if not _is_usable_range(time_range):
+                    continue
+                start = time_range.get("startTime")
+                end = time_range.get("endTime")
+                if start and end:
+                    label = f"{start}-{end}"
+                    if label not in ranges:
+                        ranges.append(label)
+        section_lines.extend(ranges or ["未配置"])
+        sections.append("\n".join(section_lines))
+
+    if not schedules:
+        sections = [
+            date_label,
+            "\n".join(
+                [
+                    format_class_type_section_title(1),
+                    f"默认: {fallback_start} - {fallback_end}",
+                ]
+            ),
+            "\n".join([format_class_type_section_title(2), "未配置"]),
+        ]
+
+    return "\n\n".join(sections)

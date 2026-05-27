@@ -1,7 +1,9 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QLabel, QTabWidget, QWidget, QPushButton, QHBoxLayout)
-from PyQt6.QtCore import Qt
-import datetime
+                             QHeaderView, QLabel, QTabWidget, QWidget, QPushButton, QHBoxLayout,
+                             QGroupBox)
+
+from ..services.class_types import format_class_type_section_title
+from ..services.schedule_display import group_schedules_by_weekday_and_type
 
 class ScheduleDialog(QDialog):
     def __init__(self, config_manager, parent=None):
@@ -31,50 +33,22 @@ class ScheduleDialog(QDialog):
             5: "周五", 6: "周六", 7: "周日"
         }
 
-        # Create tabs for Monday - Sunday (or just Mon-Fri based on data)
-        # We'll create 1-5 (or 1-7) fixed tabs or dynamic? 
-        # Requirement said "Monday to Thursday", but let's show all available.
-        
-        has_data = False
-        display_items = []
-        for item in schedules:
-            if "schedules" in item:
-                class_type = item.get("classType")
-                for rule in item.get("schedules", []):
-                    rule_copy = dict(rule)
-                    rule_copy["classType"] = class_type
-                    display_items.append(rule_copy)
-            else:
-                display_items.append(item)
+        grouped = group_schedules_by_weekday_and_type(schedules)
+        has_data = bool(grouped)
 
-        sorted_schedules = sorted(display_items, key=lambda x: (x.get("weekday", 0), x.get("classType", 0)))
-
-        for item in sorted_schedules:
-            wd = item.get("weekday")
-            name = weekdays.get(wd, f"周{wd}")
-            if item.get("classType") is not None:
-                name = f"{name} 类型{item.get('classType')}"
-            
+        for wd in sorted(grouped):
             tab = QWidget()
             tab_layout = QVBoxLayout(tab)
-            
-            table = QTableWidget()
-            table.setColumnCount(2)
-            table.setHorizontalHeaderLabels(["开始时间", "结束时间"])
-            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-            
-            ranges = item.get("timeRanges", [])
-            table.setRowCount(len(ranges))
-            
-            for i, r in enumerate(ranges):
-                start = r.get("startTime", "--:--")
-                end = r.get("endTime", "--:--")
-                table.setItem(i, 0, QTableWidgetItem(start))
-                table.setItem(i, 1, QTableWidgetItem(end))
-            
-            tab_layout.addWidget(table)
-            self.tabs.addTab(tab, name)
-            has_data = True
+
+            for class_type in (1, 2):
+                group = QGroupBox(format_class_type_section_title(class_type))
+                group_layout = QVBoxLayout(group)
+                table = self.create_time_table(grouped.get(wd, {}).get(class_type, []))
+                group_layout.addWidget(table)
+                tab_layout.addWidget(group)
+
+            tab_layout.addStretch(1)
+            self.tabs.addTab(tab, weekdays.get(wd, f"周{wd}"))
 
         if not has_data:
             layout.addWidget(QLabel("暂无时间表数据，请先同步配置。"))
@@ -86,3 +60,23 @@ class ScheduleDialog(QDialog):
         close_btn.clicked.connect(self.accept)
         btn_layout.addWidget(close_btn)
         layout.addLayout(btn_layout)
+
+    def create_time_table(self, ranges):
+        table = QTableWidget()
+        table.setColumnCount(2)
+        table.setHorizontalHeaderLabels(["开始时间", "结束时间"])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        if not ranges:
+            table.setRowCount(1)
+            table.setItem(0, 0, QTableWidgetItem("未配置"))
+            table.setItem(0, 1, QTableWidgetItem(""))
+            return table
+
+        table.setRowCount(len(ranges))
+        for i, time_range in enumerate(ranges):
+            start = time_range.get("startTime", "--:--")
+            end = time_range.get("endTime", "--:--")
+            table.setItem(i, 0, QTableWidgetItem(start))
+            table.setItem(i, 1, QTableWidgetItem(end))
+        return table

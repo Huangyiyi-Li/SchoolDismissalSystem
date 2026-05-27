@@ -84,9 +84,21 @@ class DatabaseManager:
                 swipe_time DATETIME DEFAULT CURRENT_TIMESTAMP,
                 card_id TEXT,
                 class_name TEXT,
-                status TEXT
+                status TEXT,
+                source TEXT,
+                source_detail TEXT,
+                class_type INTEGER
             )
         ''')
+
+        cursor.execute("PRAGMA table_info(logs)")
+        log_columns = [info[1] for info in cursor.fetchall()]
+        if "source" not in log_columns:
+            cursor.execute("ALTER TABLE logs ADD COLUMN source TEXT")
+        if "source_detail" not in log_columns:
+            cursor.execute("ALTER TABLE logs ADD COLUMN source_detail TEXT")
+        if "class_type" not in log_columns:
+            cursor.execute("ALTER TABLE logs ADD COLUMN class_type INTEGER")
         
         conn.commit()
         conn.close()
@@ -230,20 +242,49 @@ class DatabaseManager:
         conn.commit()
         conn.close()
 
+    def clear_mappings(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM mapping")
+        conn.commit()
+        conn.close()
+
     def get_all_mappings(self):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT card_id, class_name, school_id FROM mapping")
+        cursor.execute("SELECT card_id, class_type, class_name, school_id FROM mapping")
         rows = cursor.fetchall()
         conn.close()
         return rows
 
-    def log_swipe(self, card_id, class_name, status):
+    def log_swipe(
+        self,
+        card_id,
+        class_name,
+        status,
+        source=None,
+        source_detail=None,
+        class_type=None,
+    ):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("INSERT INTO logs (swipe_time, card_id, class_name, status) VALUES (?, ?, ?, ?)", 
-                       (now, card_id, class_name, status))
+        cursor.execute(
+            """
+            INSERT INTO logs
+                (swipe_time, card_id, class_name, status, source, source_detail, class_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                now,
+                card_id,
+                class_name,
+                status,
+                source,
+                source_detail,
+                class_type,
+            ),
+        )
         conn.commit()
         conn.close()
 
@@ -254,3 +295,38 @@ class DatabaseManager:
         rows = cursor.fetchall()
         conn.close()
         return rows
+
+    def get_recent_log_records(self, limit=500):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT swipe_time, card_id, class_name, status, source, source_detail, class_type
+            FROM logs
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        records = []
+        for row in rows:
+            timestamp, card_id, class_name, status, source, source_detail, class_type = row
+            inferred_source = source or "刷卡"
+            inferred_detail = source_detail
+            if inferred_source == "刷卡" and not inferred_detail:
+                inferred_detail = card_id or ""
+            records.append(
+                {
+                    "timestamp": timestamp,
+                    "card_id": card_id or "",
+                    "class_name": class_name or "",
+                    "status": status or "",
+                    "source": inferred_source,
+                    "source_detail": inferred_detail or "",
+                    "class_type": class_type,
+                }
+            )
+        return records

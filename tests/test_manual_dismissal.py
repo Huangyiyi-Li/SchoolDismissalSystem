@@ -40,7 +40,18 @@ class ManualDismissalTests(unittest.TestCase):
         manager.manual_command_history = set()
         manager.tts_worker = FakeTtsWorker()
         manager.logged_events = []
-        manager._log_event = lambda *args: manager.logged_events.append(args)
+
+        def log_event(card_id, class_name, action, reason, **kwargs):
+            event = {
+                "card_id": card_id,
+                "class_name": class_name,
+                "action": action,
+                "reason": reason,
+            }
+            event.update(kwargs)
+            manager.logged_events.append(event)
+
+        manager._log_event = log_event
         return manager
 
     def test_unknown_class_without_name_fails_without_fake_broadcast(self):
@@ -52,7 +63,17 @@ class ManualDismissalTests(unittest.TestCase):
         self.assertEqual(manager.tts_worker.texts, [])
         self.assertEqual(
             manager.logged_events,
-            [("123", "未知班级", "跳过", "服务端指令缺少班级信息")],
+            [
+                {
+                    "card_id": "",
+                    "class_name": "未知班级",
+                    "action": "跳过",
+                    "reason": "服务端指令缺少班级信息",
+                    "class_type": 1,
+                    "source": "服务端指令",
+                    "source_detail": "classId=123",
+                }
+            ],
         )
 
     def test_command_payload_class_voice_name_can_broadcast_without_local_mapping(self):
@@ -68,6 +89,8 @@ class ManualDismissalTests(unittest.TestCase):
 
         self.assertEqual(result, {"result": "success"})
         self.assertEqual(manager.tts_worker.texts, ["一年级一班正在放学"])
+        self.assertEqual(manager.logged_events[0]["source"], "服务端指令")
+        self.assertEqual(manager.logged_events[0]["source_detail"], "classId=123")
 
 
 if __name__ == "__main__":

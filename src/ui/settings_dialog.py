@@ -107,6 +107,7 @@ class SettingsDialog(QDialog):
         
         msg = "设置已保存。"
         if school_id_changed or api_base_url_changed:
+            self.clear_local_school_data()
             msg += "\n\n检测到学校 ID 或接口地址已变更，正在尝试应用并同步..."
             # Apply to runtime service
             if self.sync_service and self.sync_service.api:
@@ -116,6 +117,12 @@ class SettingsDialog(QDialog):
         
         QMessageBox.information(self, "成功", msg)
         self.accept()
+
+    def clear_local_school_data(self):
+        if self.sync_service and hasattr(self.sync_service, "db") and self.sync_service.db:
+            self.sync_service.db.clear_mappings()
+        self.config.set("schedules", [])
+        self.config.save()
 
     def trigger_sync(self, silent=False):
         if self.sync_service:

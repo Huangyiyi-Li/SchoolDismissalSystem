@@ -74,9 +74,11 @@ class DataSyncWorker(QObject):
         self.sync_schedule()
         print("[Sync] Data sync completed.")
 
-    def sync_classes(self):
+    def sync_classes(self, clear_existing=False):
         classes = self.api.get_classes()
         if classes:
+            if clear_existing and hasattr(self.db, "clear_mappings"):
+                self.db.clear_mappings()
             count = 0
             for cls in classes:
                 # cls: {classId, cardId, classVoiceName, ...}
@@ -160,6 +162,10 @@ class DataSyncService(QObject):
     @property
     def api(self):
         return self.worker.api
+
+    @property
+    def db(self):
+        return self.worker.db
         
     def force_sync(self):
         self.force_sync_signal.emit()

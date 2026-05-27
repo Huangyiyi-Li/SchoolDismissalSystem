@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QTableWidget, QTableWidgetItem, QHeaderView, QLabel, 
                              QLineEdit, QMessageBox, QWidget)
 from PyQt6.QtCore import Qt
+from ..services.class_types import format_class_type_label
 
 class MappingDialog(QDialog):
     def __init__(self, db_manager, parent=None):
@@ -39,33 +40,35 @@ class MappingDialog(QDialog):
 
         # Table Area
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["卡号", "班级", "学校ID", "操作"])
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["卡号", "类型", "名称", "学校ID", "操作"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         layout.addWidget(self.table)
 
     def load_data(self):
         rows = self.db.get_all_mappings()
         self.table.setRowCount(0)
         for row in rows:
-            # row: card_id, class_name, school_id
-            self.add_row_to_table(row[0], row[1], row[2])
+            # row: card_id, class_type, class_name, school_id
+            self.add_row_to_table(row[0], row[1], row[2], row[3])
 
-    def add_row_to_table(self, card_id, class_name, school_id):
+    def add_row_to_table(self, card_id, class_type, class_name, school_id):
         row_idx = self.table.rowCount()
         self.table.insertRow(row_idx)
         
         self.table.setItem(row_idx, 0, QTableWidgetItem(card_id))
-        self.table.setItem(row_idx, 1, QTableWidgetItem(class_name))
-        self.table.setItem(row_idx, 2, QTableWidgetItem(str(school_id) if school_id else ""))
+        self.table.setItem(row_idx, 1, QTableWidgetItem(format_class_type_label(class_type)))
+        self.table.setItem(row_idx, 2, QTableWidgetItem(class_name))
+        self.table.setItem(row_idx, 3, QTableWidgetItem(str(school_id) if school_id else ""))
         
         del_btn = QPushButton("删除")
         del_btn.setStyleSheet("color: red;")
         del_btn.clicked.connect(lambda: self.delete_mapping(card_id))
-        self.table.setCellWidget(row_idx, 3, del_btn)
+        self.table.setCellWidget(row_idx, 4, del_btn)
 
     def add_mapping(self):
         card_id = self.card_input.text().strip().upper()

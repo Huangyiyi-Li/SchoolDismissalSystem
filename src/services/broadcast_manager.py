@@ -74,7 +74,7 @@ class TTSWorker(QObject):
 
 
 class BroadcastManager(QObject):
-    log_updated = pyqtSignal(str, str, str, str, str) # time, card, class, action, reason
+    log_updated = pyqtSignal(str, str, str, str, str, str) # time, source, type, name, action, reason
     queue_updated = pyqtSignal(list) # list of class names
 
     def __init__(self, config_manager, db_manager, api_service=None):
@@ -105,8 +105,11 @@ class BroadcastManager(QObject):
         Returns a unique string for the current active time window, e.g. 'Weekday-1_08:30-18:30'.
         Returns None if not in any window.
         """
+        schedules = self.config.get("schedules")
+        if not schedules and class_type == 2:
+            return None
         return get_active_window_signature(
-            self.config.get("schedules"),
+            schedules,
             self.config.get("time_window_start", "16:30"),
             self.config.get("time_window_end", "18:30"),
             class_type=class_type,
@@ -120,7 +123,14 @@ class BroadcastManager(QObject):
         class_type = class_info[3]
         
         if not class_name:
-            self._log_event(card_id, "未知", "跳过", "无效卡号")
+            self._log_event(
+                card_id,
+                "未知",
+                "跳过",
+                "无效卡号",
+                source="刷卡",
+                source_detail=card_id,
+            )
             return
 
         # 2. Check Time Window (SECOND)
@@ -130,7 +140,15 @@ class BroadcastManager(QObject):
             is_test_mode,
         )
         if not window_sig:
-            self._log_event(card_id, class_name, "跳过", "非播报时段")
+            self._log_event(
+                card_id,
+                class_name,
+                "跳过",
+                "非播报时段",
+                class_type=class_type,
+                source="刷卡",
+                source_detail=card_id,
+            )
             return
 
         print(f"[Debug] Current Window: {window_sig}")
@@ -195,7 +213,15 @@ class BroadcastManager(QObject):
         
         # Log Result
         print(f"[Debug] Process Result: {action} - {reason}")
-        self._log_event(card_id, class_name, action, reason)
+        self._log_event(
+            card_id,
+            class_name,
+            action,
+            reason,
+            class_type=class_type,
+            source="刷卡",
+            source_detail=card_id,
+        )
 
     def process_manual_dismissal(self, params):
         class_id = str(params.get("classId") or "").strip()
@@ -229,7 +255,15 @@ class BroadcastManager(QObject):
         )
 
         if not class_name:
-            self._log_event(class_id, "未知班级", "跳过", "服务端指令缺少班级信息")
+            self._log_event(
+                "",
+                "未知班级",
+                "跳过",
+                "服务端指令缺少班级信息",
+                class_type=class_type,
+                source="服务端指令",
+                source_detail=f"classId={class_id}",
+            )
             return {"result": "fail", "message": f"class not found: {class_id}"}
 
         message = build_dismissal_voice_text(class_name)
@@ -237,7 +271,15 @@ class BroadcastManager(QObject):
         reason = "服务端指令"
         if teacher_name:
             reason += f"/{teacher_name}"
-        self._log_event(class_id, class_name, "语音播报", reason)
+        self._log_event(
+            "",
+            class_name,
+            "语音播报",
+            reason,
+            class_type=class_type,
+            source="服务端指令",
+            source_detail=f"classId={class_id}",
+        )
 
         if self.api_service:
             import threading
@@ -257,13 +299,29 @@ class BroadcastManager(QObject):
 
         return {"result": "success"}
 
-    def is_within_time_window(self):
-        return self.get_current_window_signature() is not None
+    def is_within_time_window(self, class_type=None):
+        return self.get_current_window_signature(class_type=class_type) is not None
 
-    def _log_event(self, card_id, class_name, action, reason):
+    def _log_event(
+        self,
+        card_id,
+        class_name,
+        action,
+        reason,
+        class_type=None,
+        source="刷卡",
+        source_detail=None,
+    ):
         # DB: Combine for backward compatibility
         full_status = f"{action} ({reason})" if reason else action
-        self.db.log_swipe(card_id, class_name, full_status)
+        self.db.log_swipe(
+            card_id,
+            class_name,
+            full_status,
+            source=source,
+            source_detail=source_detail or card_id or "",
+            class_type=class_type,
+        )
         
         now = datetime.datetime.now()
         timestamp = now.strftime(DISPLAY_TIMESTAMP_FORMAT)
@@ -271,13 +329,28 @@ class BroadcastManager(QObject):
         date_str = now.strftime("%Y-%m-%d")
         
         # Emit Signal for UI
-        self.log_updated.emit(timestamp, card_id, class_name, action, reason)
+        from .class_types import format_class_type_label
+
+        source_text = source
+        if source == "刷卡" and (source_detail or card_id):
+            source_text = f"刷卡 {source_detail or card_id}"
+        self.log_updated.emit(
+            timestamp,
+            source_text,
+            format_class_type_label(class_type),
+            class_name,
+            action,
+            reason,
+        )
         
         # File Logging
         try:
             log_file = os.path.join(self.log_dir, f"{date_str}.txt")
             with open(log_file, "a", encoding="utf-8") as f:
-                f.write(f"[{now_str}] [Card:{card_id}] [Class:{class_name}] [{action}] [{reason}]\n")
+                f.write(
+                    f"[{now_str}] [Source:{source_text}] [Type:{format_class_type_label(class_type)}] "
+                    f"[Name:{class_name}] [{action}] [{reason}]\n"
+                )
         except Exception as e:
             print(f"[Log] File Write Error: {e}")
 
