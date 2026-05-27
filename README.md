@@ -47,7 +47,7 @@ pip install -r requirements.txt
 * `school_id`: 您的学校 ID (用于 API 通讯)。
 * `udp_port`: UDP 监听端口 (默认 39169)。
 * `api_base_url`: API 地址，测试环境为 `https://rest-test.xxt.cn`，正式环境为 `https://rest.xxt.cn`。
-* `device_no`: MQTT 设备编号；留空时程序启动会自动生成并保存。
+* `device_no`: MQTT 设备编号；留空时程序会用本机 MAC 生成 12 位大写十六进制编号并保存，例如 `AABBCCDDEEFF`。
 
 ### 3. 运行程序
 

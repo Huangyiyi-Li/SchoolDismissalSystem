@@ -7,7 +7,7 @@
 - 说明：这里的心跳指“本软件客户端在线状态”，不是 UDP 刷卡设备心跳；刷卡设备仍然按现状，仅刷卡时发送 UDP 数据。
 - 当前实现：
   - `src/services/mqtt_service.py` 启动后连接 `111.6.173.61:1883`。
-  - `client-id` 与用户名均使用 `device_no`。
+  - `client-id` 与用户名均使用 `device_no`，默认由本机 MAC 生成 12 位大写十六进制编号，例如 `AABBCCDDEEFF`。
   - 默认每 60 秒向 `v1/devices/me/telemetry` 发送 `HeartBeat.deviceNo` 和 `HeartBeat.time`。
   - MQTT 连接失败只写运行日志，不阻塞刷卡、播报和本地记录。
 - 验收标准：

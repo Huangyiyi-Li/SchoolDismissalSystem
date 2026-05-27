@@ -2,6 +2,8 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QMessageBox, QFormLayout,
                              QCheckBox)
 from PyQt6.QtCore import Qt
+from ..services.device_identity import format_device_no_from_node, normalize_device_no
+import uuid
 
 class SettingsDialog(QDialog):
     def __init__(self, config_manager, data_sync_service=None, parent=None):
@@ -29,9 +31,14 @@ class SettingsDialog(QDialog):
         form_layout.addRow("接口地址:", self.api_base_url_edit)
 
         self.device_no_edit = QLineEdit()
-        self.device_no_edit.setText(self.config.get("device_no", ""))
-        self.device_no_edit.setPlaceholderText("MQTT 设备编号，留空则下次启动自动生成")
-        form_layout.addRow("设备编号:", self.device_no_edit)
+        self.device_no_edit.setText(normalize_device_no(self.config.get("device_no", "")))
+        self.device_no_edit.setPlaceholderText("12位十六进制设备编号，如 AABBCCDDEEFF")
+        device_no_layout = QHBoxLayout()
+        device_no_layout.addWidget(self.device_no_edit)
+        generate_device_no_btn = QPushButton("一键获取")
+        generate_device_no_btn.clicked.connect(self.fill_local_device_no)
+        device_no_layout.addWidget(generate_device_no_btn)
+        form_layout.addRow("设备编号:", device_no_layout)
 
         self.mqtt_enabled_check = QCheckBox("启用 MQTT 心跳/指令")
         self.mqtt_enabled_check.setChecked(self.config.get("mqtt_enabled", True))
@@ -68,7 +75,7 @@ class SettingsDialog(QDialog):
     def save_settings(self):
         new_school_id = self.school_id_edit.text().strip()
         api_base_url = self.api_base_url_edit.text().strip().rstrip("/")
-        device_no = self.device_no_edit.text().strip()
+        device_no = normalize_device_no(self.device_no_edit.text())
         port_str = self.port_edit.text().strip()
 
         if not new_school_id:
@@ -131,3 +138,6 @@ class SettingsDialog(QDialog):
         else:
              if not silent:
                 QMessageBox.warning(self, "错误", "同步服务未运行")
+
+    def fill_local_device_no(self):
+        self.device_no_edit.setText(format_device_no_from_node(uuid.getnode()))

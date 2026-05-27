@@ -1,6 +1,5 @@
 import sys
 import os
-import uuid
 
 # Ensure src is in path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -11,6 +10,7 @@ from PyQt6.QtWidgets import QApplication
 from src.services.config_manager import ConfigManager
 from src.services.udp_server import UDPServerService
 from src.services.broadcast_manager import BroadcastManager
+from src.services.device_identity import get_or_create_device_no
 from src.database import DatabaseManager
 from src.ui.main_window import MainWindow
 
@@ -41,11 +41,7 @@ def main():
     broadcast_manager = BroadcastManager(config_manager, db_manager, api_service=api_service)
     mqtt_service = None
     if config_manager.get("mqtt_enabled", True):
-        device_no = config_manager.get("device_no")
-        if not device_no:
-            device_no = str(uuid.getnode())
-            config_manager.set("device_no", device_no)
-            config_manager.save()
+        device_no = get_or_create_device_no(config_manager)
         from src.services.mqtt_service import DismissalMqttService
         mqtt_service = DismissalMqttService(
             device_no=device_no,
