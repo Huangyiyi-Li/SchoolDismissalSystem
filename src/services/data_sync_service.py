@@ -70,7 +70,7 @@ class DataSyncWorker(QObject):
             return
 
         print("[Sync] Starting data sync...")
-        self.sync_classes()
+        self.sync_classes(clear_existing=True)
         self.sync_schedule()
         print("[Sync] Data sync completed.")
 

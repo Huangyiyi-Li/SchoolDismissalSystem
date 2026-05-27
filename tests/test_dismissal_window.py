@@ -139,6 +139,30 @@ class DismissalWindowTests(unittest.TestCase):
             ),
         )
 
+    def test_grouped_window_label_accepts_string_class_type(self):
+        schedules = [
+            {
+                "classType": "1",
+                "schedules": [
+                    {
+                        "weekday": 3,
+                        "timeRanges": [{"startTime": "16:30", "endTime": "17:00"}],
+                    }
+                ],
+            }
+        ]
+        now = datetime.datetime(2026, 5, 27, 12, 0)
+
+        self.assertIn(
+            "行政班放学时段\n16:30-17:00",
+            format_grouped_window_label(
+                schedules,
+                "16:30",
+                "18:30",
+                now=now,
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

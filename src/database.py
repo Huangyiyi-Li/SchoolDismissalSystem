@@ -252,7 +252,7 @@ class DatabaseManager:
     def get_all_mappings(self):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT card_id, class_type, class_name, school_id FROM mapping")
+        cursor.execute("SELECT card_id, class_type, class_id, class_name, school_id FROM mapping")
         rows = cursor.fetchall()
         conn.close()
         return rows

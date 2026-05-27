@@ -30,6 +30,22 @@ class LogRecordTests(unittest.TestCase):
             self.assertEqual(logs[0][2], "四年级七班")
             self.assertEqual(logs[0][3], "语音播报 (正常)")
 
+    def test_mapping_rows_include_class_id_for_management_view(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseManager(db_path=os.path.join(tmpdir, "school.db"))
+            db.add_mapping(
+                "1001",
+                "一年级一班",
+                class_id="101",
+                school_id="40125",
+                class_type=1,
+            )
+
+            self.assertEqual(
+                db.get_all_mappings(),
+                [("1001", 1, "101", "一年级一班", "40125")],
+            )
+
     def test_structured_logs_describe_swipe_and_server_command_sources(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = DatabaseManager(db_path=os.path.join(tmpdir, "school.db"))

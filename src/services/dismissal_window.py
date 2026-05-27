@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from .class_types import format_class_type_section_title
+from .class_types import format_class_type_section_title, normalize_class_type
 from .schedule_display import is_usable_range
 
 
@@ -24,7 +24,7 @@ def _parse_clock(value: str) -> dt.time:
 def _iter_schedule_rules(schedules, class_type=None):
     for item in schedules or []:
         if "schedules" in item:
-            item_class_type = item.get("classType")
+            item_class_type = normalize_class_type(item.get("classType"))
             if class_type is not None and item_class_type != class_type:
                 continue
             for rule in item.get("schedules") or []:

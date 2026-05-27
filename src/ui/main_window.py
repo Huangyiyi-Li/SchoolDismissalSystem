@@ -10,6 +10,31 @@ from ..services.log_records import format_log_timestamp
 from ..services.class_types import format_class_type_label
 from ..services.dismissal_window import format_grouped_window_label
 
+
+def format_schedule_status_html(window_text):
+    lines = window_text.splitlines()
+    html_lines = []
+    for line in lines:
+        if not line:
+            html_lines.append("<br>")
+        elif "年" in line and "星期" in line:
+            html_lines.append(
+                f"<div style='color:#1f2937;font-size:15px;font-weight:600;'>{line}</div>"
+            )
+        elif line == "行政班放学时段":
+            html_lines.append(
+                f"<div style='color:#0f766e;font-weight:700;margin-top:8px;'>{line}</div>"
+            )
+        elif line == "社团班放学时段":
+            html_lines.append(
+                f"<div style='color:#7c3aed;font-weight:700;margin-top:8px;'>{line}</div>"
+            )
+        elif line == "未配置":
+            html_lines.append(f"<div style='color:#9ca3af;font-weight:400;'>{line}</div>")
+        else:
+            html_lines.append(f"<div style='color:#374151;font-weight:500;'>{line}</div>")
+    return "".join(html_lines)
+
 class MainWindow(QMainWindow):
     def __init__(self, config_manager, db_manager, broadcast_manager, udp_server, data_sync_service=None):
         super().__init__()
@@ -118,9 +143,14 @@ class MainWindow(QMainWindow):
         # Time Window Status
         status_group = QGroupBox("系统状态")
         status_layout = QVBoxLayout()
-        window_str = f"{self.config.get('time_window_start')} - {self.config.get('time_window_end')}"
-        self.window_label = QLabel(f"播报时段:\n{window_str}")
-        self.window_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        initial_window_text = format_grouped_window_label(
+            self.config.get("schedules"),
+            self.config.get("time_window_start", "16:30"),
+            self.config.get("time_window_end", "18:30"),
+        )
+        self.window_label = QLabel(format_schedule_status_html(initial_window_text))
+        self.window_label.setTextFormat(Qt.TextFormat.RichText)
+        self.window_label.setStyleSheet("font-size: 14px;")
         self.window_label.setWordWrap(True)
         self.status_label = QLabel("当前状态: 初始化...")
         
@@ -280,7 +310,7 @@ class MainWindow(QMainWindow):
             self.config.get("time_window_end", "18:30"),
         )
 
-        self.window_label.setText(f"播报时段:\n{window_text}")
+        self.window_label.setText(format_schedule_status_html(window_text))
 
         # Update Status
         if self.config.get("test_mode", False):

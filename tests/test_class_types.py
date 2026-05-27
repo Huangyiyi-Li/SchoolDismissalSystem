@@ -17,6 +17,11 @@ class ClassTypeTests(unittest.TestCase):
         self.assertEqual(format_class_type_label(None), "未知类型")
         self.assertEqual(format_class_type_label(9), "类型9")
 
+    def test_string_numeric_class_type_uses_business_names(self):
+        self.assertEqual(format_class_type_label("1"), "行政班")
+        self.assertEqual(format_class_type_label("2"), "社团班")
+        self.assertEqual(format_class_type_label("1.0"), "行政班")
+
 
 if __name__ == "__main__":
     unittest.main()

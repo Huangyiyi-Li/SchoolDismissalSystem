@@ -57,6 +57,19 @@ class FakeConfig:
 
 
 class DataSyncV2Tests(unittest.TestCase):
+    def test_sync_all_replaces_existing_mappings_with_server_class_types(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseManager(db_path=os.path.join(tmpdir, "school.db"))
+            db.add_mapping("A1", "旧名称", class_id="old-1", school_id="40125")
+            worker = DataSyncWorker(FakeApi(), db, FakeConfig())
+
+            worker.sync_all()
+
+            self.assertEqual(
+                db.get_class_info_by_card("A1"),
+                ("一年级一班", "101", "40125", 1, "一(1)班", "一年级一班"),
+            )
+
     def test_sync_classes_persists_class_type_and_names(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = DatabaseManager(db_path=os.path.join(tmpdir, "school.db"))

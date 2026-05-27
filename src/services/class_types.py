@@ -10,6 +10,12 @@ def normalize_class_type(class_type):
     try:
         return int(class_type)
     except (TypeError, ValueError):
+        try:
+            as_float = float(class_type)
+            if as_float.is_integer():
+                return int(as_float)
+        except (TypeError, ValueError):
+            pass
         return class_type
 
 
