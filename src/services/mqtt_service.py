@@ -4,6 +4,8 @@ import datetime
 import json
 import threading
 
+from .network_log import default_network_logger
+
 
 class DismissalMqttService:
     def __init__(
@@ -20,6 +22,7 @@ class DismissalMqttService:
         rpc_response_topic_template=None,
         client_factory=None,
         clock=None,
+        network_logger=None,
     ):
         self.device_no = device_no
         self.command_handler = command_handler
@@ -34,6 +37,7 @@ class DismissalMqttService:
         )
         self.client_factory = client_factory or self._default_client_factory
         self.clock = clock or self._default_clock
+        self.network_logger = network_logger or default_network_logger
         self.client = None
         self._timer = None
         self._running = False
@@ -103,6 +107,14 @@ class DismissalMqttService:
             }
         }
         client.publish(self.telemetry_topic, json.dumps(payload, ensure_ascii=False), qos=0)
+        self.network_logger.record(
+            protocol="MQTT",
+            direction="OUT",
+            target=self.telemetry_topic,
+            request=payload,
+            response=None,
+            result="published",
+        )
 
     def _handle_connect(self, client, userdata, flags, rc):
         if rc == 0:
@@ -112,8 +124,18 @@ class DismissalMqttService:
             print(f"[MQTT] Connect returned rc={rc}")
 
     def _handle_message(self, client, userdata, message):
+        response_topic = ""
+        result = None
         try:
             payload = json.loads(message.payload.decode("utf-8"))
+            self.network_logger.record(
+                protocol="MQTT",
+                direction="IN",
+                target=getattr(message, "topic", ""),
+                request=payload,
+                response=None,
+                result="received",
+            )
             if payload.get("method") != "ManualDismissal":
                 return
             result = self.command_handler(payload.get("params") or {})
@@ -125,6 +147,14 @@ class DismissalMqttService:
         request_id = self._extract_request_id(getattr(message, "topic", ""))
         response_topic = self.rpc_response_topic_template.format(request_id=request_id)
         client.publish(response_topic, json.dumps(result, ensure_ascii=False), qos=0)
+        self.network_logger.record(
+            protocol="MQTT",
+            direction="OUT",
+            target=response_topic,
+            request=result,
+            response=None,
+            result="published",
+        )
 
     def _extract_request_id(self, topic):
         if not topic:

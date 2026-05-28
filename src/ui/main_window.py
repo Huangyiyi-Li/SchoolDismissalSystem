@@ -128,6 +128,10 @@ class MainWindow(QMainWindow):
         schedule_action.triggered.connect(self.open_schedule_dialog)
         toolbar.addAction(schedule_action)
 
+        network_log_action = QAction("接口日志", self)
+        network_log_action.triggered.connect(self.open_network_log_dialog)
+        toolbar.addAction(network_log_action)
+
         startup_action = QAction("开机自启", self)
         startup_action.triggered.connect(self.enable_startup)
         toolbar.addAction(startup_action)
@@ -213,6 +217,11 @@ class MainWindow(QMainWindow):
     def open_schedule_dialog(self):
         from .schedule_dialog import ScheduleDialog
         dialog = ScheduleDialog(self.config, self)
+        dialog.exec()
+
+    def open_network_log_dialog(self):
+        from .network_log_dialog import NetworkLogDialog
+        dialog = NetworkLogDialog(parent=self)
         dialog.exec()
 
     def enable_startup(self):

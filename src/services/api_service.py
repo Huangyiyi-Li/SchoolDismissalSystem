@@ -1,16 +1,53 @@
 import requests
 import datetime
+import time
+
+from .network_log import default_network_logger
 
 class ApiService:
     BASE_URL = "https://rest.xxt.cn"  # Formal Environment
 
-    def __init__(self, school_id, base_url=None, session=None):
+    def __init__(self, school_id, base_url=None, session=None, network_logger=None):
         self.school_id = school_id
         self.base_url = (base_url or self.BASE_URL).rstrip("/")
         self.session = session or requests
+        self.network_logger = network_logger or default_network_logger
         self.headers = {
             "Content-Type": "application/json"
         }
+
+    def _post_json(self, path, payload, timeout, verify=None):
+        url = f"{self.base_url}{path}"
+        start = time.perf_counter()
+        try:
+            kwargs = {"headers": self.headers, "timeout": timeout}
+            if verify is not None:
+                kwargs["verify"] = verify
+            response = self.session.post(url, json=payload, **kwargs)
+            response.raise_for_status()
+            data = response.json()
+            self.network_logger.record(
+                protocol="HTTP",
+                direction="OUT",
+                target=url,
+                request=payload,
+                response=data,
+                elapsed_ms=int((time.perf_counter() - start) * 1000),
+                result="success" if data.get("code") == 200 else "fail",
+            )
+            return data
+        except Exception as e:
+            self.network_logger.record(
+                protocol="HTTP",
+                direction="OUT",
+                target=url,
+                request=payload,
+                response=None,
+                elapsed_ms=int((time.perf_counter() - start) * 1000),
+                result="error",
+                error=e,
+            )
+            raise
 
     def get_classes(self):
         """
@@ -21,14 +58,12 @@ class ApiService:
             print("[API] Error: School ID not set.")
             return None
 
-        url = f"{self.base_url}/kq-http/school-dismissal-system/get-classes-v2"
+        path = "/kq-http/school-dismissal-system/get-classes-v2"
         payload = {
             "schoolId": self.school_id
         }
         try:
-            response = self.session.post(url, json=payload, headers=self.headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            data = self._post_json(path, payload, timeout=10)
             if data.get("code") == 200:
                 return data.get("data", [])
             else:
@@ -53,7 +88,7 @@ class ApiService:
         Push dismissal notice to remote API.
         Path: /kq-http/school-dismissal-system/push-dismissal-notice-v2
         """
-        url = f"{self.base_url}/kq-http/school-dismissal-system/push-dismissal-notice-v2"
+        path = "/kq-http/school-dismissal-system/push-dismissal-notice-v2"
         
         if not self.school_id:
             print("[API] Push Skipped: School ID not set.")
@@ -75,11 +110,7 @@ class ApiService:
         }
         
         try:
-            # Increased timeout to 15s to avoid read timeouts
-            response = self.session.post(url, json=payload, headers=self.headers, verify=False, timeout=15)
-            # response.raise_for_status() # Optional, verify return code manually
-            
-            data = response.json()
+            data = self._post_json(path, payload, timeout=15, verify=False)
             if data.get("code") == 200:
                 print(f"[API] Push Success for Card {card_id}")
                 return True
@@ -98,14 +129,12 @@ class ApiService:
         if not self.school_id:
             return None
 
-        url = f"{self.base_url}/kq-http/school-dismissal-system/get-school-dismissal-schedule-v2"
+        path = "/kq-http/school-dismissal-system/get-school-dismissal-schedule-v2"
         payload = {
             "schoolId": self.school_id
         }
         try:
-            response = self.session.post(url, json=payload, headers=self.headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            data = self._post_json(path, payload, timeout=10)
             if data.get("code") == 200:
                 return data.get("data", [])
             else:

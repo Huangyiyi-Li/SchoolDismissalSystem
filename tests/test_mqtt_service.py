@@ -35,6 +35,14 @@ class FakeClient:
         self.published.append((topic, json.loads(payload), qos))
 
 
+class FakeNetworkLogger:
+    def __init__(self):
+        self.entries = []
+
+    def record(self, **entry):
+        self.entries.append(entry)
+
+
 class MqttServiceTests(unittest.TestCase):
     def test_start_configures_client_and_subscribes_down_topic(self):
         client = FakeClient()
@@ -53,11 +61,13 @@ class MqttServiceTests(unittest.TestCase):
 
     def test_publish_heartbeat_uses_document_payload(self):
         client = FakeClient()
+        network_logger = FakeNetworkLogger()
         service = DismissalMqttService(
             device_no="device-1",
             client_factory=lambda client_id: client,
             command_handler=lambda command: {"result": "success"},
             clock=lambda: "2026-05-01 18:00:00",
+            network_logger=network_logger,
         )
 
         service.publish_heartbeat()
@@ -72,14 +82,19 @@ class MqttServiceTests(unittest.TestCase):
                 )
             ],
         )
+        self.assertEqual(network_logger.entries[0]["protocol"], "MQTT")
+        self.assertEqual(network_logger.entries[0]["direction"], "OUT")
+        self.assertEqual(network_logger.entries[0]["target"], "v1/devices/me/telemetry")
 
     def test_manual_dismissal_invokes_handler_and_replies_success(self):
         client = FakeClient()
         received = []
+        network_logger = FakeNetworkLogger()
         service = DismissalMqttService(
             device_no="device-1",
             client_factory=lambda client_id: client,
             command_handler=lambda command: received.append(command) or {"result": "success"},
+            network_logger=network_logger,
         )
         message = type(
             "Message",
@@ -99,6 +114,10 @@ class MqttServiceTests(unittest.TestCase):
 
         self.assertEqual(received, [{"classType": 1, "classId": "123"}])
         self.assertEqual(client.published[-1], ("v1/devices/me/rpc/response/42", {"result": "success"}, 0))
+        self.assertEqual(network_logger.entries[0]["direction"], "IN")
+        self.assertEqual(network_logger.entries[0]["target"], "v1/devices/me/rpc/request/42")
+        self.assertEqual(network_logger.entries[1]["direction"], "OUT")
+        self.assertEqual(network_logger.entries[1]["target"], "v1/devices/me/rpc/response/42")
 
     def test_manual_dismissal_replies_fail_on_handler_error(self):
         client = FakeClient()
