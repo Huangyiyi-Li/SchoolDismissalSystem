@@ -1,6 +1,7 @@
 import unittest
 import sys
 import types
+from unittest.mock import patch
 
 
 qtcore = types.ModuleType("PyQt6.QtCore")
@@ -30,6 +31,24 @@ class FakeTtsWorker:
 
     def add_text(self, text):
         self.texts.append(text)
+
+
+class FakeApiService:
+    def __init__(self):
+        self.pushes = []
+
+    def push_dismissal_notice(self, *args, **kwargs):
+        self.pushes.append((args, kwargs))
+        return True
+
+
+class ImmediateThread:
+    def __init__(self, target, daemon=False):
+        self.target = target
+        self.daemon = daemon
+
+    def start(self):
+        self.target()
 
 
 class ManualDismissalTests(unittest.TestCase):
@@ -91,6 +110,39 @@ class ManualDismissalTests(unittest.TestCase):
         self.assertEqual(manager.tts_worker.texts, ["一年级一班正在放学"])
         self.assertEqual(manager.logged_events[0]["source"], "服务端指令")
         self.assertEqual(manager.logged_events[0]["source_detail"], "classId=123")
+
+    def test_successful_server_command_reports_back_through_push_notice_api(self):
+        manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
+        api = FakeApiService()
+        manager.api_service = api
+
+        with patch("threading.Thread", ImmediateThread):
+            result = manager.process_manual_dismissal(
+                {
+                    "classType": 1,
+                    "classId": "123",
+                    "dismissalStatus": 1,
+                    "triggerTeacherId": "T01",
+                    "triggerTeacherName": "王老师",
+                }
+            )
+
+        self.assertEqual(result, {"result": "success"})
+        self.assertEqual(
+            api.pushes,
+            [
+                (
+                    ("123", None),
+                    {
+                        "dismissal_status": 1,
+                        "class_type": 1,
+                        "trigger_type": 2,
+                        "trigger_teacher_id": "T01",
+                        "trigger_teacher_name": "王老师",
+                    },
+                )
+            ],
+        )
 
 
 if __name__ == "__main__":
