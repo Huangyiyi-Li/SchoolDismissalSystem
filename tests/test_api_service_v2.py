@@ -102,7 +102,7 @@ class ApiServiceV2Tests(unittest.TestCase):
                 "cardId": "9988",
                 "dismissalStatus": 1,
                 "triggerTeacherId": 7,
-                "trigger_teacher_name": "测试老师",
+                "triggerTeacherName": "测试老师",
                 "postTime": "2026-05-01 18:00:00",
             },
         )

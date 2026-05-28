@@ -105,7 +105,7 @@ class ApiService:
             "cardId": card_id,
             "dismissalStatus": dismissal_status, # 1-Dismissal
             "triggerTeacherId": trigger_teacher_id,
-            "trigger_teacher_name": trigger_teacher_name,
+            "triggerTeacherName": trigger_teacher_name,
             "postTime": now_str
         }
         
