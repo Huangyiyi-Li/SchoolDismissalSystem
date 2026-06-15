@@ -58,6 +58,9 @@
 - 正式版 Release 使用正式 Git Tag，并设置为稳定版本。
 - 测试版 Release 使用预发布 Tag，并标记为 `Pre-release`，不得覆盖稳定版的 `Latest` 状态。
 - Release 必须上传带版本号的 Windows ZIP 和 SHA256 校验文件。
+- GitHub Release API 会清洗中文资产物理文件名，因此 Release 下载文件名允许使用
+  `school-dismissal-vX.Y.Z-windows-x64.zip`，但必须设置完整中文显示标签；GitHub Actions
+  Artifact 和构建目录中的原始 ZIP 仍须使用“数智家校放学系统”中文命名。
 - Release 说明至少包含：
   - 版本类型：正式版或测试版
   - 对应 Commit
