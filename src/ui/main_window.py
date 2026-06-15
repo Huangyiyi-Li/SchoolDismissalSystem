@@ -5,6 +5,7 @@ from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtCore import Qt, QTimer
 # Fix import paths assuming running from project root or having src in pythonpath
 # For robustness in simple script execution, we might need sys.path hacks in main
+from ..app_info import APP_NAME, APP_VERSION_LABEL
 from .mapping_dialog import MappingDialog
 from ..services.log_records import format_log_timestamp
 from ..services.class_types import format_class_type_label
@@ -44,7 +45,7 @@ class MainWindow(QMainWindow):
         self.udp_server = udp_server
         self.data_sync_service = data_sync_service
         
-        self.setWindowTitle("校园放学语音播报系统")
+        self.setWindowTitle(APP_NAME)
         self.resize(1024, 768)
         
         self.setup_ui()
@@ -167,6 +168,10 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self.window_label)
         status_layout.addWidget(self.status_label)
         status_layout.addWidget(self.test_mode_check)
+        version_label = QLabel(APP_VERSION_LABEL)
+        version_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        version_label.setStyleSheet("color: #6b7280; font-size: 12px; font-weight: 400;")
+        status_layout.addWidget(version_label)
         status_group.setLayout(status_layout)
         left_layout.addWidget(status_group)
         

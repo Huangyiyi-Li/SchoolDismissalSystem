@@ -5,6 +5,12 @@ on:
   push:
     branches:
       - master
+      - codex/2.0-upgrade
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -26,15 +32,69 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build executable
+      - name: Read application metadata
+        id: app_info
+        shell: pwsh
+        run: |
+          $version = python -c "from src.app_info import APP_VERSION; print(APP_VERSION)"
+          $zipName = python -c "from src.app_info import WINDOWS_ZIP_NAME; print(WINDOWS_ZIP_NAME)"
+          $shaName = python -c "from src.app_info import WINDOWS_SHA256_NAME; print(WINDOWS_SHA256_NAME)"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "zip_name=$zipName" >> $env:GITHUB_OUTPUT
+          "sha_name=$shaName" >> $env:GITHUB_OUTPUT
+
+      - name: Verify tag matches client version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $expectedTag = "v${{ steps.app_info.outputs.version }}"
+          if ("${{ github.ref_name }}" -ne $expectedTag) {
+            throw "Git tag ${{ github.ref_name }} does not match client version $expectedTag"
+          }
+
+      - name: Build executable and release files
         shell: pwsh
         run: |
           python build_exe.py
 
-      - name: Upload Windows executable
+      - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SchoolDismissalSystem-windows
-          path: dist/SchoolDismissalSystem.exe
+          name: 数智家校放学系统-v${{ steps.app_info.outputs.version }}-windows-x64
+          path: |
+            dist/数智家校放学系统.exe
+            dist/${{ steps.app_info.outputs.zip_name }}
+            dist/${{ steps.app_info.outputs.sha_name }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish GitHub pre-release
+        if: ${{ startsWith(github.ref, 'refs/tags/') && contains(steps.app_info.outputs.version, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $notes = Get-Content "release-notes/${{ github.ref_name }}.md" -Raw
+          $notes = $notes.Replace("{{COMMIT_SHA}}", "${{ github.sha }}")
+          Set-Content "dist/release-notes.md" $notes -Encoding utf8
+          gh release create "${{ github.ref_name }}" `
+            "dist/${{ steps.app_info.outputs.zip_name }}" `
+            "dist/${{ steps.app_info.outputs.sha_name }}" `
+            --title "${{ github.ref_name }}" `
+            --notes-file "dist/release-notes.md" `
+            --prerelease
+
+      - name: Publish GitHub release
+        if: ${{ startsWith(github.ref, 'refs/tags/') && !contains(steps.app_info.outputs.version, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $notes = Get-Content "release-notes/${{ github.ref_name }}.md" -Raw
+          $notes = $notes.Replace("{{COMMIT_SHA}}", "${{ github.sha }}")
+          Set-Content "dist/release-notes.md" $notes -Encoding utf8
+          gh release create "${{ github.ref_name }}" `
+            "dist/${{ steps.app_info.outputs.zip_name }}" `
+            "dist/${{ steps.app_info.outputs.sha_name }}" `
+            --title "${{ github.ref_name }}" `
+            --notes-file "dist/release-notes.md"

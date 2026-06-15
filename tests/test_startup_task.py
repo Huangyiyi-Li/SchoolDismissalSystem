@@ -13,30 +13,31 @@ class StartupTaskTests(unittest.TestCase):
 
     def test_register_script_sets_executable_working_directory_and_delay(self):
         script = build_register_startup_task_script(
-            task_name="SchoolDismissalSystem",
-            executable_path=r"D:\SchoolDismissalSystem\SchoolDismissalSystem.exe",
-            working_directory=r"D:\SchoolDismissalSystem",
+            task_name="数智家校放学系统",
+            executable_path=r"D:\数智家校放学系统\数智家校放学系统.exe",
+            working_directory=r"D:\数智家校放学系统",
         )
 
         self.assertIn("New-ScheduledTaskAction", script)
-        self.assertIn("-Execute 'D:\\SchoolDismissalSystem\\SchoolDismissalSystem.exe'", script)
-        self.assertIn("-WorkingDirectory 'D:\\SchoolDismissalSystem'", script)
+        self.assertIn("-Execute 'D:\\数智家校放学系统\\数智家校放学系统.exe'", script)
+        self.assertIn("-WorkingDirectory 'D:\\数智家校放学系统'", script)
         self.assertIn("$Trigger.Delay = 'PT30S'", script)
         self.assertIn("Register-ScheduledTask", script)
-        self.assertIn("-TaskName 'SchoolDismissalSystem'", script)
+        self.assertIn("-TaskName '数智家校放学系统'", script)
+        self.assertIn("数智家校放学系统开机自启", script)
         self.assertIn("-Force", script)
 
     def test_startup_vbs_sets_working_directory_and_delays_launch(self):
         script = build_startup_vbs_script(
-            executable_path=r"D:\SchoolDismissalSystem\SchoolDismissalSystem.exe",
-            working_directory=r"D:\SchoolDismissalSystem",
+            executable_path=r"D:\数智家校放学系统\数智家校放学系统.exe",
+            working_directory=r"D:\数智家校放学系统",
             delay_milliseconds=30000,
         )
 
         self.assertIn("WScript.Sleep 30000", script)
-        self.assertIn('WshShell.CurrentDirectory = "D:\\SchoolDismissalSystem"', script)
+        self.assertIn('WshShell.CurrentDirectory = "D:\\数智家校放学系统"', script)
         self.assertIn(
-            'WshShell.Run """D:\\SchoolDismissalSystem\\SchoolDismissalSystem.exe"""',
+            'WshShell.Run """D:\\数智家校放学系统\\数智家校放学系统.exe"""',
             script,
         )
 

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import datetime
 
 from src.database import DatabaseManager
 from src.services.data_sync_service import DataSyncWorker
@@ -45,15 +46,30 @@ class FakeApi:
 
 
 class FakeConfig:
-    def __init__(self):
-        self.values = {}
+    def __init__(self, values=None):
+        self.values = values or {}
         self.saved = False
+
+    def get(self, key, default=None):
+        return self.values.get(key, default)
 
     def set(self, key, value):
         self.values[key] = value
 
     def save(self):
         self.saved = True
+
+
+class FakeTimer:
+    def __init__(self):
+        self.started_with = None
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+    def start(self, interval):
+        self.started_with = interval
 
 
 class DataSyncV2Tests(unittest.TestCase):
@@ -111,6 +127,22 @@ class DataSyncV2Tests(unittest.TestCase):
 
         self.assertEqual(config.values["schedules"][0]["classType"], 1)
         self.assertTrue(config.saved)
+
+    def test_schedules_precise_timer_two_minutes_before_next_window(self):
+        schedules = FakeApi().get_school_dismissal_schedule()
+        config = FakeConfig({"schedules": schedules})
+        worker = DataSyncWorker(
+            FakeApi(),
+            object(),
+            config,
+            clock=lambda: datetime.datetime(2026, 6, 15, 14, 0),
+        )
+        worker.pre_window_timer = FakeTimer()
+
+        worker.schedule_pre_window_sync()
+
+        self.assertTrue(worker.pre_window_timer.stopped)
+        self.assertEqual(worker.pre_window_timer.started_with, 88 * 60 * 1000)
 
 
 if __name__ == "__main__":

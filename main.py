@@ -6,16 +6,21 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(current_dir, 'src')
 sys.path.insert(0, src_dir)
 
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
+from src.app_info import APP_NAME
 from src.services.config_manager import ConfigManager
 from src.services.udp_server import UDPServerService
 from src.services.broadcast_manager import BroadcastManager
 from src.services.device_identity import get_or_create_device_no
 from src.database import DatabaseManager
 from src.ui.main_window import MainWindow
+from src.utils.path_utils import get_resource_path
 
 def main():
     app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    app.setWindowIcon(QIcon(get_resource_path("assets/branding/logo-vertical.png")))
     
     # Initialize Core Services
     config_manager = ConfigManager()

@@ -2,3 +2,4 @@ PyQt6
 pyttsx3
 requests
 paho-mqtt
+Pillow

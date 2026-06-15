@@ -26,6 +26,9 @@ except ImportError:
         def __init__(self, *args, **kwargs):
             self.timeout = _Signal()
 
+        def setSingleShot(self, single_shot):
+            self.single_shot = single_shot
+
         def start(self, interval):
             self.interval = interval
 
@@ -45,17 +48,27 @@ except ImportError:
         def wait(self):
             pass
 
+import datetime
+
+from .pre_window_sync import get_next_pre_window_sync_time
+
+
 class DataSyncWorker(QObject):
     finished = pyqtSignal()
     
-    def __init__(self, api_service, db_manager, config_manager):
+    def __init__(self, api_service, db_manager, config_manager, clock=None):
         super().__init__()
         self.api = api_service
         self.db = db_manager
         self.config = config_manager
+        self.clock = clock or datetime.datetime.now
         self.running = True
 
     def run(self):
+        self.pre_window_timer = QTimer(self)
+        self.pre_window_timer.setSingleShot(True)
+        self.pre_window_timer.timeout.connect(self._handle_pre_window_sync)
+
         # Initial sync on start
         self.sync_all()
         
@@ -73,6 +86,7 @@ class DataSyncWorker(QObject):
         self.sync_classes(clear_existing=True)
         self.sync_schedule()
         print("[Sync] Data sync completed.")
+        self.schedule_pre_window_sync()
 
     def sync_classes(self, clear_existing=False):
         classes = self.api.get_classes()
@@ -132,9 +146,34 @@ class DataSyncWorker(QObject):
         else:
             print("[Sync] No schedule returned from API or error occurred.")
 
+    def schedule_pre_window_sync(self):
+        if not hasattr(self, "pre_window_timer"):
+            return
+
+        self.pre_window_timer.stop()
+        now = self.clock()
+        trigger_time = get_next_pre_window_sync_time(
+            self.config.get("schedules", []),
+            now=now,
+            lead_minutes=2,
+        )
+        if trigger_time is None:
+            print("[Sync] No upcoming dismissal window pre-sync scheduled.")
+            return
+
+        delay_ms = max(1, int((trigger_time - now).total_seconds() * 1000))
+        self.pre_window_timer.start(delay_ms)
+        print(f"[Sync] Next pre-window sync scheduled for {trigger_time:%Y-%m-%d %H:%M:%S}.")
+
+    def _handle_pre_window_sync(self):
+        print("[Sync] Running pre-window data sync.")
+        self.sync_all()
+
     def stop_timer(self):
         if hasattr(self, 'timer'):
             self.timer.stop()
+        if hasattr(self, "pre_window_timer"):
+            self.pre_window_timer.stop()
         self.running = False
 
 class DataSyncService(QObject):

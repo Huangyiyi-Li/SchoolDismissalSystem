@@ -4,9 +4,11 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
+from src.app_info import APP_NAME
 
-TASK_NAME = "SchoolDismissalSystem"
-STARTUP_SCRIPT_NAME = "SchoolDismissalSystemStartup.vbs"
+
+TASK_NAME = APP_NAME
+STARTUP_SCRIPT_NAME = f"{APP_NAME}开机启动.vbs"
 
 
 @dataclass
@@ -117,7 +119,7 @@ def build_register_startup_task_script(task_name, executable_path, working_direc
         "-Action $Action "
         "-Trigger $Trigger "
         "-Settings $Settings "
-        "-Description '校园放学语音播报系统开机自启' "
+        f"-Description {quote_powershell_string(f'{APP_NAME}开机自启')} "
         "-Force | Out-Null",
     ]
     return "\n".join(command)
