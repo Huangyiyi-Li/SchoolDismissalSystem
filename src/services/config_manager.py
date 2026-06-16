@@ -14,6 +14,7 @@ class ConfigManager:
         "mqtt_host": "111.6.173.61",
         "mqtt_port": 1883,
         "mqtt_heartbeat_interval_seconds": 60,
+        "mqtt_reconnect_interval_seconds": 60,
         "mqtt_telemetry_topic": "v1/devices/me/telemetry",
         "mqtt_rpc_request_topic": "v1/devices/me/rpc/request/+",
         "mqtt_rpc_response_topic_template": "v1/devices/me/rpc/response/{request_id}"

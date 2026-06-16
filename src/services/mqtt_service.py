@@ -15,6 +15,7 @@ class DismissalMqttService:
         host="111.6.173.61",
         port=1883,
         heartbeat_interval_seconds=60,
+        reconnect_interval_seconds=60,
         up_topic=None,
         down_topic=None,
         telemetry_topic=None,
@@ -29,6 +30,7 @@ class DismissalMqttService:
         self.host = host
         self.port = int(port)
         self.heartbeat_interval_seconds = int(heartbeat_interval_seconds)
+        self.reconnect_interval_seconds = int(reconnect_interval_seconds)
         self.telemetry_topic = telemetry_topic or up_topic or "v1/devices/me/telemetry"
         self.rpc_request_topic = rpc_request_topic or down_topic or "v1/devices/me/rpc/request/+"
         self.rpc_response_topic_template = (
@@ -40,6 +42,7 @@ class DismissalMqttService:
         self.network_logger = network_logger or default_network_logger
         self.client = None
         self._timer = None
+        self._reconnect_timer = None
         self._running = False
 
     def _default_client_factory(self, client_id):
@@ -56,27 +59,45 @@ class DismissalMqttService:
         if not self.device_no:
             print("[MQTT] Skipping start: device number is not set.")
             return False
+        self._running = True
+        return self._connect_once()
+
+    def _connect_once(self):
+        if not self._running:
+            return False
         try:
-            self.client = self.client_factory(self.device_no)
-            self.client.username_pw_set(self.device_no)
-            self.client.on_connect = self._handle_connect
-            self.client.on_message = self._handle_message
+            self._cancel_reconnect()
+            self.client = self._create_client()
             self.client.connect(self.host, self.port, 60)
             self.client.loop_start()
-            self._running = True
             self.publish_heartbeat()
             self._schedule_next_heartbeat()
             print(f"[MQTT] Started for device {self.device_no}")
             return True
         except Exception as exc:
             print(f"[MQTT] Start failed: {exc}")
+            self._schedule_reconnect()
             return False
+
+    def _create_client(self):
+        client = self.client_factory(self.device_no)
+        client.username_pw_set(self.device_no)
+        if hasattr(client, "reconnect_delay_set"):
+            client.reconnect_delay_set(
+                min_delay=self.reconnect_interval_seconds,
+                max_delay=self.reconnect_interval_seconds,
+            )
+        client.on_connect = self._handle_connect
+        client.on_disconnect = self._handle_disconnect
+        client.on_message = self._handle_message
+        return client
 
     def stop(self):
         self._running = False
         if self._timer:
             self._timer.cancel()
             self._timer = None
+        self._cancel_reconnect()
         if self.client:
             try:
                 self.client.loop_stop()
@@ -94,6 +115,25 @@ class DismissalMqttService:
     def _heartbeat_tick(self):
         self.publish_heartbeat()
         self._schedule_next_heartbeat()
+
+    def _schedule_reconnect(self):
+        if not self._running or self._reconnect_timer is not None:
+            return
+        self._reconnect_timer = threading.Timer(
+            self.reconnect_interval_seconds,
+            self._reconnect_tick,
+        )
+        self._reconnect_timer.daemon = True
+        self._reconnect_timer.start()
+
+    def _cancel_reconnect(self):
+        if self._reconnect_timer:
+            self._reconnect_timer.cancel()
+            self._reconnect_timer = None
+
+    def _reconnect_tick(self):
+        self._reconnect_timer = None
+        self._connect_once()
 
     def publish_heartbeat(self):
         client = self.client
@@ -116,12 +156,16 @@ class DismissalMqttService:
             result="published",
         )
 
-    def _handle_connect(self, client, userdata, flags, rc):
+    def _handle_connect(self, client, userdata, flags, rc, *args):
         if rc == 0:
             client.subscribe(self.rpc_request_topic)
             print(f"[MQTT] Subscribed: {self.rpc_request_topic}")
         else:
             print(f"[MQTT] Connect returned rc={rc}")
+
+    def _handle_disconnect(self, client, userdata, rc, *args):
+        if rc != 0 and self._running:
+            print(f"[MQTT] Disconnected unexpectedly, waiting to reconnect: rc={rc}")
 
     def _handle_message(self, client, userdata, message):
         response_topic = ""

@@ -54,6 +54,7 @@ def main():
             host=config_manager.get("mqtt_host", "111.6.173.61"),
             port=config_manager.get("mqtt_port", 1883),
             heartbeat_interval_seconds=config_manager.get("mqtt_heartbeat_interval_seconds", 60),
+            reconnect_interval_seconds=config_manager.get("mqtt_reconnect_interval_seconds", 60),
             telemetry_topic=config_manager.get("mqtt_telemetry_topic", "v1/devices/me/telemetry"),
             rpc_request_topic=config_manager.get("mqtt_rpc_request_topic", "v1/devices/me/rpc/request/+"),
             rpc_response_topic_template=config_manager.get(

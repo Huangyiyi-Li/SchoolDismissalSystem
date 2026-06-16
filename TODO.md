@@ -9,7 +9,7 @@
   - `src/services/mqtt_service.py` 启动后连接 `111.6.173.61:1883`。
   - `client-id` 与用户名均使用 `device_no`，默认由本机 MAC 生成 12 位大写十六进制编号，例如 `AABBCCDDEEFF`。
   - 默认每 60 秒向 `v1/devices/me/telemetry` 发送 `HeartBeat.deviceNo` 和 `HeartBeat.time`。
-  - MQTT 连接失败只写运行日志，不阻塞刷卡、播报和本地记录。
+  - MQTT 连接失败后默认每 60 秒重试；服务端中断重启后，客户端会自动重连并重新订阅下发指令 topic。
 - 验收标准：
   - 软件启动后会自动周期性上报心跳。
   - 断网或服务器异常不会造成界面卡死、播报中断或程序崩溃。

@@ -89,7 +89,7 @@ root/
 * `push-dismissal-notice-v2`: 推送放学通知。
 * `get-school-dismissal-schedule-v2`: 获取放学时间表。
 
-MQTT 默认连接 `111.6.173.61:1883`，用户名和 client-id 均使用本机 `device_no`。心跳上行 topic 为 `v1/devices/me/telemetry`；下发放学指令订阅 `v1/devices/me/rpc/request/+`；回执 topic 为 `v1/devices/me/rpc/response/{request_id}`。
+MQTT 默认连接 `111.6.173.61:1883`，用户名和 client-id 均使用本机 `device_no`。心跳上行 topic 为 `v1/devices/me/telemetry`；下发放学指令订阅 `v1/devices/me/rpc/request/+`；回执 topic 为 `v1/devices/me/rpc/response/{request_id}`。启动连接失败后默认每 60 秒重试；服务端中断重启后客户端会自动重连并重新订阅下发指令 topic。
 
 ### 数据同步触发机制
 
