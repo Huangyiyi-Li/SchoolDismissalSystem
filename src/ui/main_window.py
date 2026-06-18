@@ -44,11 +44,16 @@ class MainWindow(QMainWindow):
         self.broadcast_manager = broadcast_manager
         self.udp_server = udp_server
         self.data_sync_service = data_sync_service
+        self._test_mode_reset_on_startup = bool(self.config.get("test_mode", False))
+        if self._test_mode_reset_on_startup:
+            self.config.set("test_mode", False)
         
         self.setWindowTitle(APP_NAME)
         self.resize(1024, 768)
         
         self.setup_ui()
+        if self._test_mode_reset_on_startup:
+            self._log_test_mode_change(False, "启动时自动关闭上次残留的测试模式")
         self.connect_signals()
         
         # Initial logs load
@@ -239,6 +244,20 @@ class MainWindow(QMainWindow):
 
     def toggle_test_mode(self, state):
         is_test = (state == Qt.CheckState.Checked.value) or (state == 2) # Qt.CheckState or int
+        old_value = bool(self.config.get("test_mode", False))
+        if is_test and not old_value:
+            reply = QMessageBox.question(
+                self,
+                "确认开启测试模式",
+                "开启测试模式后，刷卡只会本地播报，不会推送到服务端后台。确认开启吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                self.test_mode_check.blockSignals(True)
+                self.test_mode_check.setChecked(False)
+                self.test_mode_check.blockSignals(False)
+                return
         self.config.set("test_mode", is_test)
         # ConfigManager set doesn't auto-save always? We should save or keep runtime.
         # BroadcastManager reads from config each time in new logic?
@@ -247,12 +266,28 @@ class MainWindow(QMainWindow):
         # self.config.save() # Optional, user choice if test mode persists.
         status_text = "已开启 (API推送禁用)" if is_test else "已关闭 (正常模式)"
         print(f"[Main] Test Mode {status_text}")
+        if old_value != is_test:
+            self._log_test_mode_change(
+                is_test,
+                "用户在主界面切换；开启后仅本地播报，不推送服务端",
+            )
         
         # Visual feedback?
         if is_test:
             self.test_mode_check.setStyleSheet("color: blue; font-weight: bold;")
         else:
             self.test_mode_check.setStyleSheet("")
+
+    def _log_test_mode_change(self, enabled, reason):
+        action = "开启" if enabled else "关闭"
+        self.broadcast_manager._log_event(
+            "",
+            "测试模式",
+            action,
+            reason,
+            source="系统设置",
+            source_detail="test_mode",
+        )
 
     def add_log(self, timestamp, source, target_type, target_name, action, reason=""):
         self.log_table.insertRow(0)
