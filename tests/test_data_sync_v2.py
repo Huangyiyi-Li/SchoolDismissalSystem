@@ -45,6 +45,16 @@ class FakeApi:
         ]
 
 
+class EmptyScheduleApi(FakeApi):
+    def get_school_dismissal_schedule(self):
+        return []
+
+
+class FailedScheduleApi(FakeApi):
+    def get_school_dismissal_schedule(self):
+        return None
+
+
 class FakeConfig:
     def __init__(self, values=None):
         self.values = values or {}
@@ -127,6 +137,25 @@ class DataSyncV2Tests(unittest.TestCase):
 
         self.assertEqual(config.values["schedules"][0]["classType"], 1)
         self.assertTrue(config.saved)
+
+    def test_sync_schedule_clears_previous_schedule_when_server_returns_empty(self):
+        config = FakeConfig({"schedules": [{"weekday": 1}]})
+        worker = DataSyncWorker(EmptyScheduleApi(), object(), config)
+
+        worker.sync_schedule()
+
+        self.assertEqual(config.values["schedules"], [])
+        self.assertTrue(config.saved)
+
+    def test_sync_schedule_keeps_previous_schedule_when_request_fails(self):
+        previous = [{"weekday": 1}]
+        config = FakeConfig({"schedules": previous})
+        worker = DataSyncWorker(FailedScheduleApi(), object(), config)
+
+        worker.sync_schedule()
+
+        self.assertEqual(config.values["schedules"], previous)
+        self.assertFalse(config.saved)
 
     def test_schedules_precise_timer_two_minutes_before_next_window(self):
         schedules = FakeApi().get_school_dismissal_schedule()

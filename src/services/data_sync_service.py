@@ -137,14 +137,14 @@ class DataSyncWorker(QObject):
 
     def sync_schedule(self):
         schedules = self.api.get_school_dismissal_schedule()
-        if schedules:
+        if schedules is not None:
             # schedules is a list of dicts:
             # [{"weekday": 1, "timeRanges": [{"startTime": "15:30", "endTime": "16:00"}]}, ...]
             self.config.set("schedules", schedules)
             self.config.save()
             print(f"[Sync] Schedule fetched and saved: {len(schedules)} rules.")
         else:
-            print("[Sync] No schedule returned from API or error occurred.")
+            print("[Sync] Schedule request failed; keeping the previous schedule.")
 
     def schedule_pre_window_sync(self):
         if not hasattr(self, "pre_window_timer"):

@@ -47,7 +47,7 @@ def get_active_window_signature(
     now = now or dt.datetime.now()
     current_weekday = now.weekday() + 1
     current_time = now.time()
-    has_schedule = bool(schedules)
+    has_schedule_response = schedules is not None
 
     for rule in _iter_schedule_rules(schedules, class_type=class_type):
         if rule.get("weekday") != current_weekday:
@@ -64,7 +64,7 @@ def get_active_window_signature(
             if start <= current_time <= end:
                 return f"dynamic:{current_weekday}:{start_str}-{end_str}"
 
-    if has_schedule:
+    if has_schedule_response:
         return None
 
     start = _parse_clock(fallback_start)
@@ -106,7 +106,9 @@ def format_window_label(schedules, fallback_start, fallback_end, now=None, class
     if today_ranges:
         date_label = f"{now.year} 年 {now.month} 月 {now.day} 日 {_WEEKDAY_NAMES[current_weekday]}"
         return "\n".join([date_label, *today_ranges])
-    return f"默认: {fallback_start} - {fallback_end}"
+    if schedules is None:
+        return f"默认: {fallback_start} - {fallback_end}"
+    return "未配置"
 
 
 def format_grouped_window_label(schedules, fallback_start, fallback_end, now=None):
@@ -133,7 +135,7 @@ def format_grouped_window_label(schedules, fallback_start, fallback_end, now=Non
         section_lines.extend(ranges or ["未配置"])
         sections.append("\n".join(section_lines))
 
-    if not schedules:
+    if schedules is None:
         sections = [
             date_label,
             "\n".join(

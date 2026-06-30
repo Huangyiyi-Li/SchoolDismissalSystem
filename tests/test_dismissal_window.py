@@ -69,7 +69,7 @@ class DismissalWindowTests(unittest.TestCase):
         now = datetime.datetime(2026, 4, 21, 17, 15)
 
         signature = get_active_window_signature(
-            [],
+            None,
             "16:30",
             "18:30",
             now=now,
@@ -78,7 +78,7 @@ class DismissalWindowTests(unittest.TestCase):
         self.assertEqual(signature, "static:16:30-18:30")
         self.assertTrue(
             is_now_within_window(
-                [],
+                None,
                 "16:30",
                 "18:30",
                 now=now,
@@ -86,13 +86,32 @@ class DismissalWindowTests(unittest.TestCase):
         )
         self.assertEqual(
             format_window_label(
-                [],
+                None,
                 "16:30",
                 "18:30",
                 now=now,
             ),
             "默认: 16:30 - 18:30",
         )
+
+    def test_empty_server_schedule_does_not_use_static_fallback(self):
+        now = datetime.datetime(2026, 4, 21, 17, 15)
+
+        self.assertIsNone(
+            get_active_window_signature(
+                [],
+                "16:30",
+                "18:30",
+                now=now,
+            )
+        )
+        self.assertEqual(
+            format_window_label([], "16:30", "18:30", now=now),
+            "未配置",
+        )
+        grouped = format_grouped_window_label([], "16:30", "18:30", now=now)
+        self.assertNotIn("默认:", grouped)
+        self.assertEqual(grouped.count("未配置"), 2)
 
     def test_format_grouped_window_label_splits_class_types(self):
         schedules = [
