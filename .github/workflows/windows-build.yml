@@ -60,10 +60,20 @@ jobs:
             throw "Git tag ${{ github.ref_name }} does not match client version $expectedTag"
           }
 
+      - name: Build ONBON Java LED bridge
+        shell: pwsh
+        run: |
+          python tools/build_led_bridge.py
+          if ($LASTEXITCODE -ne 0) {
+            throw "ONBON Java bridge build failed with exit code $LASTEXITCODE"
+          }
+          if (!(Test-Path "led-bridge\led-bridge.jar")) {
+            throw "ONBON Java bridge build produced no led-bridge.jar"
+          }
+
       - name: Build executable and release files
         shell: pwsh
         run: |
-          cmd /c led-bridge\build.bat
           Copy-Item -Recurse "$env:JAVA_HOME\jre" "led-bridge\runtime"
           if (Test-Path "$env:JAVA_HOME\LICENSE") {
             Copy-Item "$env:JAVA_HOME\LICENSE" "led-bridge\runtime\LICENSE"
