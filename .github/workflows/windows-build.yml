@@ -27,6 +27,12 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Setup Java 8 for ONBON LED bridge
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "8"
+
       - name: Install dependencies
         shell: pwsh
         run: |
@@ -57,6 +63,11 @@ jobs:
       - name: Build executable and release files
         shell: pwsh
         run: |
+          cmd /c led-bridge\build.bat
+          Copy-Item -Recurse "$env:JAVA_HOME\jre" "led-bridge\runtime"
+          if (Test-Path "$env:JAVA_HOME\LICENSE") {
+            Copy-Item "$env:JAVA_HOME\LICENSE" "led-bridge\runtime\LICENSE"
+          }
           python build_exe.py
 
       - name: Upload Windows build

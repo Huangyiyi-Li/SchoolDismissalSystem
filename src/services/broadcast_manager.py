@@ -77,11 +77,12 @@ class BroadcastManager(QObject):
     log_updated = pyqtSignal(str, str, str, str, str, str) # time, source, type, name, action, reason
     queue_updated = pyqtSignal(list) # list of class names
 
-    def __init__(self, config_manager, db_manager, api_service=None):
+    def __init__(self, config_manager, db_manager, api_service=None, led_service=None):
         super().__init__()
         self.config = config_manager
         self.db = db_manager
         self.api_service = api_service
+        self.led_service = led_service
         
         # Ensure logs directory exists
         from ..utils.path_utils import get_app_root
@@ -213,6 +214,7 @@ class BroadcastManager(QObject):
         
         # Log Result
         print(f"[Debug] Process Result: {action} - {reason}")
+        self._mark_led_dismissing(class_id, class_type)
         self._log_event(
             card_id,
             class_name,
@@ -246,6 +248,7 @@ class BroadcastManager(QObject):
         self.manual_command_history.add(command_key)
 
         class_info = self.db.get_class_info_by_class(class_id, class_type)
+        effective_class_type = class_type if class_type is not None else class_info[3]
         class_name = (
             params.get("classVoiceName")
             or params.get("classShowName")
@@ -260,7 +263,7 @@ class BroadcastManager(QObject):
                 "未知班级",
                 "跳过",
                 "服务端指令缺少班级信息",
-                class_type=class_type,
+                class_type=effective_class_type,
                 source="服务端指令",
                 source_detail=f"classId={class_id}",
             )
@@ -276,10 +279,11 @@ class BroadcastManager(QObject):
             class_name,
             "语音播报",
             reason,
-            class_type=class_type,
+            class_type=effective_class_type,
             source="服务端指令",
             source_detail=f"classId={class_id}",
         )
+        self._mark_led_dismissing(class_id, effective_class_type)
 
         if self.api_service:
             import threading
@@ -289,7 +293,7 @@ class BroadcastManager(QObject):
                     class_id,
                     None,
                     dismissal_status=params.get("dismissalStatus", 1),
-                    class_type=class_type,
+                    class_type=effective_class_type,
                     trigger_type=2,
                     trigger_teacher_id=teacher_id,
                     trigger_teacher_name=teacher_name,
@@ -298,6 +302,20 @@ class BroadcastManager(QObject):
             threading.Thread(target=push_api, daemon=True).start()
 
         return {"result": "success"}
+
+    def _mark_led_dismissing(self, class_id, class_type=None):
+        led_service = getattr(self, "led_service", None)
+        try:
+            is_administrative_class = int(class_type) == 1
+        except (TypeError, ValueError):
+            is_administrative_class = False
+        if not led_service or not class_id or not is_administrative_class:
+            return
+        try:
+            led_service.mark_dismissing(str(class_id))
+        except Exception as exc:
+            # LED is an auxiliary output. Never block voice or server reporting.
+            print(f"[LED] Failed to queue class update: {exc}")
 
     def is_within_time_window(self, class_type=None):
         return self.get_current_window_signature(class_type=class_type) is not None

@@ -68,6 +68,22 @@ class DatabaseManager:
             except Exception as e:
                 print(f"[DB] Migration Error (class_voice_name): {e}")
 
+        # One row per class returned by the server. This is deliberately separate
+        # from mapping because a class can have multiple physical cards.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS led_classes (
+                school_id TEXT NOT NULL,
+                class_type INTEGER NOT NULL,
+                class_id TEXT NOT NULL,
+                grade_name TEXT,
+                class_name TEXT NOT NULL,
+                class_show_name TEXT,
+                class_voice_name TEXT,
+                source_order INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (school_id, class_type, class_id)
+            )
+        ''')
+
         # Devices table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS devices (
@@ -246,8 +262,81 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM mapping")
+        cursor.execute("DELETE FROM led_classes")
         conn.commit()
         conn.close()
+
+    def upsert_led_class(
+        self,
+        school_id,
+        class_type,
+        class_id,
+        grade_name,
+        class_name,
+        class_show_name=None,
+        class_voice_name=None,
+        source_order=0,
+    ):
+        if not school_id or not class_id or not class_name:
+            return False
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO led_classes
+                    (school_id, class_type, class_id, grade_name, class_name,
+                     class_show_name, class_voice_name, source_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(school_id),
+                    int(class_type or 0),
+                    str(class_id),
+                    grade_name or "",
+                    class_name,
+                    class_show_name,
+                    class_voice_name,
+                    int(source_order),
+                ),
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"[DB] Error adding LED class: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def get_led_classes(self, school_id=None):
+        """Return actual server-provided administrative classes, once per classId."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        if school_id:
+            cursor.execute(
+                """
+                SELECT school_id, class_type, class_id, grade_name, class_name,
+                       class_show_name, class_voice_name, source_order
+                FROM led_classes
+                WHERE school_id = ? AND class_type = 1
+                ORDER BY source_order, class_id
+                """,
+                (str(school_id),),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT school_id, class_type, class_id, grade_name, class_name,
+                       class_show_name, class_voice_name, source_order
+                FROM led_classes
+                WHERE class_type = 1
+                ORDER BY source_order, class_id
+                """
+            )
+        rows = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
 
     def get_all_mappings(self):
         conn = sqlite3.connect(self.db_path)

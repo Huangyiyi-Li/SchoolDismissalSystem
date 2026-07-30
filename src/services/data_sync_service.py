@@ -56,12 +56,13 @@ from .pre_window_sync import get_next_pre_window_sync_time
 class DataSyncWorker(QObject):
     finished = pyqtSignal()
     
-    def __init__(self, api_service, db_manager, config_manager, clock=None):
+    def __init__(self, api_service, db_manager, config_manager, clock=None, led_service=None):
         super().__init__()
         self.api = api_service
         self.db = db_manager
         self.config = config_manager
         self.clock = clock or datetime.datetime.now
+        self.led_service = led_service
         self.running = True
 
     def run(self):
@@ -84,56 +85,79 @@ class DataSyncWorker(QObject):
 
         print("[Sync] Starting data sync...")
         self.sync_classes(clear_existing=True)
+        if self.led_service:
+            self.led_service.refresh_async()
         self.sync_schedule()
         print("[Sync] Data sync completed.")
         self.schedule_pre_window_sync()
 
     def sync_classes(self, clear_existing=False):
         classes = self.api.get_classes()
-        if classes:
-            if clear_existing and hasattr(self.db, "clear_mappings"):
-                self.db.clear_mappings()
-            count = 0
-            for cls in classes:
-                # cls: {classId, cardId, classVoiceName, ...}
-                # Note: cardId in document says "Array" or String?
-                # Example: "cardId": "1". If it handles list, we iterate.
-                # Assuming simple relation for now as per previous logic.
-                
-                card_id_raw = cls.get("cardId")
-                # Fallback to className if classVoiceName is missing
-                class_name = cls.get("classVoiceName") or cls.get("className")
-                class_id = cls.get("classId")
-                class_type = cls.get("classType")
-                class_show_name = cls.get("classShowName")
-                class_voice_name = cls.get("classVoiceName")
-                
-                if card_id_raw and class_name:
-                    # If card_id_raw is comma separated or list?
-                    cards = []
-                    if isinstance(card_id_raw, list):
-                        cards = card_id_raw
-                    elif isinstance(card_id_raw, str):
-                        cards = card_id_raw.split(',') # Just in case
-                    else:
-                        cards = [str(card_id_raw)]
-                        
-                    for c_id in cards:
-                        clean_card_id = str(c_id).strip()
-                        if not clean_card_id:
-                            continue
-                        # Pass school_id (from API Service config) to DB
-                        self.db.add_mapping(
-                            clean_card_id,
-                            class_name,
-                            class_id,
-                            school_id=self.api.school_id,
-                            class_type=class_type,
-                            class_show_name=class_show_name,
-                            class_voice_name=class_voice_name,
-                        )
-                        count += 1
-            print(f"[Sync] Synced {count} card mappings.")
+        if classes is None:
+            print("[Sync] Class request failed; keeping the previous class data.")
+            return
+        if clear_existing and hasattr(self.db, "clear_mappings"):
+            self.db.clear_mappings()
+        count = 0
+        saved_class_ids = set()
+        for source_order, cls in enumerate(classes):
+            card_id_raw = cls.get("cardId")
+            class_name = cls.get("classVoiceName") or cls.get("className")
+            class_id = cls.get("classId")
+            class_type = cls.get("classType")
+            class_show_name = cls.get("classShowName")
+            class_voice_name = cls.get("classVoiceName")
+            grade_name = cls.get("gradeName")
+            try:
+                normalized_class_type = int(class_type)
+            except (TypeError, ValueError):
+                normalized_class_type = 0
+
+            # LED catalog is class-based rather than card-based. Keep only
+            # classes actually returned by the service and deduplicate classId.
+            catalog_key = (str(normalized_class_type), str(class_id))
+            if (
+                normalized_class_type == 1
+                and class_id
+                and class_name
+                and catalog_key not in saved_class_ids
+                and hasattr(self.db, "upsert_led_class")
+            ):
+                self.db.upsert_led_class(
+                    school_id=self.api.school_id,
+                    class_type=normalized_class_type,
+                    class_id=class_id,
+                    grade_name=grade_name,
+                    class_name=class_name,
+                    class_show_name=class_show_name,
+                    class_voice_name=class_voice_name,
+                    source_order=source_order,
+                )
+                saved_class_ids.add(catalog_key)
+
+            if card_id_raw and class_name:
+                if isinstance(card_id_raw, list):
+                    cards = card_id_raw
+                elif isinstance(card_id_raw, str):
+                    cards = card_id_raw.split(",")
+                else:
+                    cards = [str(card_id_raw)]
+
+                for c_id in cards:
+                    clean_card_id = str(c_id).strip()
+                    if not clean_card_id:
+                        continue
+                    self.db.add_mapping(
+                        clean_card_id,
+                        class_name,
+                        class_id,
+                        school_id=self.api.school_id,
+                        class_type=class_type,
+                        class_show_name=class_show_name,
+                        class_voice_name=class_voice_name,
+                    )
+                    count += 1
+        print(f"[Sync] Synced {count} card mappings.")
 
     def sync_schedule(self):
         schedules = self.api.get_school_dismissal_schedule()
@@ -180,10 +204,15 @@ class DataSyncService(QObject):
     force_sync_signal = pyqtSignal()
     stop_signal = pyqtSignal()
 
-    def __init__(self, api_service, db_manager, config_manager):
+    def __init__(self, api_service, db_manager, config_manager, led_service=None):
         super().__init__()
         self.thread = QThread()
-        self.worker = DataSyncWorker(api_service, db_manager, config_manager)
+        self.worker = DataSyncWorker(
+            api_service,
+            db_manager,
+            config_manager,
+            led_service=led_service,
+        )
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.force_sync_signal.connect(self.worker.sync_all)

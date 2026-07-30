@@ -2,6 +2,8 @@
 build/
 dist/
 *.spec
+led-bridge/led-bridge.jar
+led-bridge/runtime/
 
 # Python
 __pycache__/

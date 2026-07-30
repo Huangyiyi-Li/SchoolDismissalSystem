@@ -37,13 +37,22 @@ def format_schedule_status_html(window_text):
     return "".join(html_lines)
 
 class MainWindow(QMainWindow):
-    def __init__(self, config_manager, db_manager, broadcast_manager, udp_server, data_sync_service=None):
+    def __init__(
+        self,
+        config_manager,
+        db_manager,
+        broadcast_manager,
+        udp_server,
+        data_sync_service=None,
+        led_service=None,
+    ):
         super().__init__()
         self.config = config_manager
         self.db = db_manager
         self.broadcast_manager = broadcast_manager
         self.udp_server = udp_server
         self.data_sync_service = data_sync_service
+        self.led_service = led_service
         self._test_mode_reset_on_startup = bool(self.config.get("test_mode", False))
         if self._test_mode_reset_on_startup:
             self.config.set("test_mode", False)
@@ -221,7 +230,12 @@ class MainWindow(QMainWindow):
 
     def open_settings_dialog(self):
         from .settings_dialog import SettingsDialog
-        dialog = SettingsDialog(self.config, self.data_sync_service, self)
+        dialog = SettingsDialog(
+            self.config,
+            self.data_sync_service,
+            led_service=self.led_service,
+            parent=self,
+        )
         dialog.exec()
 
     def open_schedule_dialog(self):

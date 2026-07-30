@@ -12,6 +12,7 @@ from src.app_info import APP_NAME
 from src.services.config_manager import ConfigManager
 from src.services.udp_server import UDPServerService
 from src.services.broadcast_manager import BroadcastManager
+from src.services.led_service import LedService
 from src.services.device_identity import get_or_create_device_no
 from src.database import DatabaseManager
 from src.ui.main_window import MainWindow
@@ -25,6 +26,7 @@ def main():
     # Initialize Core Services
     config_manager = ConfigManager()
     db_manager = DatabaseManager()
+    led_service = LedService(config_manager, db_manager)
     
     # API & Sync
     from src.services.api_service import ApiService
@@ -39,11 +41,21 @@ def main():
     # Always initialize services to allow hot-binding of School ID
     print(f"[Main] Initializing API Service (School ID: {school_id or 'Not Set'})")
     api_service = ApiService(school_id, base_url=config_manager.get("api_base_url", "https://rest.xxt.cn"))
-    data_sync_service = DataSyncService(api_service, db_manager, config_manager)
+    data_sync_service = DataSyncService(
+        api_service,
+        db_manager,
+        config_manager,
+        led_service=led_service,
+    )
     data_sync_service.start()
 
     # Services
-    broadcast_manager = BroadcastManager(config_manager, db_manager, api_service=api_service)
+    broadcast_manager = BroadcastManager(
+        config_manager,
+        db_manager,
+        api_service=api_service,
+        led_service=led_service,
+    )
     mqtt_service = None
     if config_manager.get("mqtt_enabled", True):
         device_no = get_or_create_device_no(config_manager)
@@ -67,7 +79,14 @@ def main():
     udp_server = UDPServerService(port=config_manager.get("udp_port", 39169), db_manager=db_manager)
     
     # Initialize UI
-    window = MainWindow(config_manager, db_manager, broadcast_manager, udp_server, data_sync_service)
+    window = MainWindow(
+        config_manager,
+        db_manager,
+        broadcast_manager,
+        udp_server,
+        data_sync_service,
+        led_service=led_service,
+    )
     window.show()
     
     # Start Services
@@ -82,6 +101,7 @@ def main():
     if mqtt_service:
         mqtt_service.stop()
     broadcast_manager.cleanup()
+    led_service.shutdown()
     sys.exit(exit_code)
 
 if __name__ == "__main__":

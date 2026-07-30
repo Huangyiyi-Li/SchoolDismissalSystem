@@ -24,6 +24,18 @@ class FakeDb:
     def get_class_info_by_class(self, class_id, class_type=None):
         return self.class_info
 
+    def get_class_info_by_card(self, card_id):
+        return self.class_info
+
+
+class FakeConfig:
+    def get(self, key, default=None):
+        values = {
+            "test_mode": True,
+            "deduplication_interval_seconds": 300,
+        }
+        return values.get(key, default)
+
 
 class FakeTtsWorker:
     def __init__(self):
@@ -42,6 +54,14 @@ class FakeApiService:
         return True
 
 
+class FakeLedService:
+    def __init__(self):
+        self.updates = []
+
+    def mark_dismissing(self, class_id):
+        self.updates.append(class_id)
+
+
 class ImmediateThread:
     def __init__(self, target, daemon=False):
         self.target = target
@@ -58,6 +78,7 @@ class ManualDismissalTests(unittest.TestCase):
         manager.api_service = None
         manager.manual_command_history = set()
         manager.tts_worker = FakeTtsWorker()
+        manager.led_service = FakeLedService()
         manager.logged_events = []
 
         def log_event(card_id, class_name, action, reason, **kwargs):
@@ -143,6 +164,47 @@ class ManualDismissalTests(unittest.TestCase):
                 )
             ],
         )
+        self.assertEqual(manager.led_service.updates, ["123"])
+
+    def test_led_failure_does_not_block_manual_voice_or_result(self):
+        manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
+
+        def fail(_class_id):
+            raise RuntimeError("LED offline")
+
+        manager.led_service.mark_dismissing = fail
+
+        result = manager.process_manual_dismissal({"classType": 1, "classId": "123"})
+
+        self.assertEqual(result, {"result": "success"})
+        self.assertEqual(manager.tts_worker.texts, ["一年级一班正在放学"])
+
+    def test_club_command_does_not_push_administrative_class_led(self):
+        manager = self.make_manager(("足球社团", "201", "40125", 2, "足球社团", "足球社团"))
+
+        result = manager.process_manual_dismissal({"classType": 2, "classId": "201"})
+
+        self.assertEqual(result, {"result": "success"})
+        self.assertEqual(manager.led_service.updates, [])
+
+    def test_missing_payload_class_type_uses_local_administrative_type_for_led(self):
+        manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
+
+        result = manager.process_manual_dismissal({"classId": "123"})
+
+        self.assertEqual(result, {"result": "success"})
+        self.assertEqual(manager.led_service.updates, ["123"])
+
+    def test_valid_administrative_class_swipe_updates_led(self):
+        manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
+        manager.config = FakeConfig()
+        manager.voice_history = {}
+        manager.api_push_history = {}
+
+        manager.process_swipe("CARD-1", "192.168.1.20")
+
+        self.assertEqual(manager.led_service.updates, ["123"])
+        self.assertEqual(manager.tts_worker.texts, ["一年级一班正在放学"])
 
 
 if __name__ == "__main__":

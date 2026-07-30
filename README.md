@@ -22,10 +22,15 @@
 * **MQTT 联动**:
   * 软件启动后按设备编号每 60 秒上报客户端在线心跳。
   * 接收云端 `ManualDismissal` 指令后立即触发本地语音播报，并回复处理结果。
+* **仰邦 LED 状态屏**:
+  * 支持 BX-6E1XP（1024×96、单基色、网线控制）。
+  * 按服务端实际下发的年级和班级生成表格图片，同一班级多个卡号只显示一次。
+  * 每页显示两个年级，多年级由控制卡循环翻页；刷卡或手动放学后显示“放学中”。
+  * 控制卡 IP、端口、学校标题和翻页间隔均可在设置页修改，并提供连接测试和测试画面。
 
 ## 🛠 技术栈
 
-* **编程语言**: Python 3.10+
+* **编程语言**: Python 3.10+、Java 8（仰邦 SDK Bridge）
 * **GUI 框架**: PyQt6
 * **语音引擎**: pyttsx3 (SAPI5 on Windows)
 * **网络通讯**: socket (UDP), requests (HTTP), paho-mqtt (MQTT)
@@ -49,6 +54,11 @@ pip install -r requirements.txt
 * `udp_port`: UDP 监听端口 (默认 39169)。
 * `api_base_url`: API 地址，测试环境为 `https://rest-test.xxt.cn`，正式环境为 `https://rest.xxt.cn`。
 * `device_no`: MQTT 设备编号；留空时程序会用本机 MAC 生成 12 位大写十六进制编号并保存，例如 `AABBCCDDEEFF`。
+* `led_enabled`: 是否启用 LED 状态屏，默认关闭。
+* `led_controller_ip`: 控制卡 IP，默认 `192.168.100.1`。
+* `led_controller_port`: 控制卡端口，默认 `5005`。
+* `led_page_seconds`: 多页画面停留秒数，默认 `5`。
+* `led_school_title`: LED 左侧显示的学校和系统标题，支持换行。
 
 ### 3. 运行程序
 
@@ -63,7 +73,8 @@ python main.py
     * 刷卡后，日志区应显示完整年月日时分秒、卡号和处理结果。
     * 如果卡号已绑定班级且在放学时间内，音箱将播放“XX年级XX班正在放学”。
 3. **管理**:
-    * 点击工具栏“设置”可修改学校 ID 和系统参数。
+    * 点击工具栏“绑定学校”可修改学校 ID、控制卡 IP 和 LED 参数。
+    * 首次接屏先点击“测试连接”，成功后点击“发送测试画面”，最后勾选“启用 LED 状态屏”并保存。
     * 点击“卡号映射”可手动管理本地班级数据（通常由 API 自动覆盖）。
     * 点击工具栏“开机自启”可自动创建 Windows 开机启动项，登录后延迟 30 秒启动本系统；如果当前账号无权写入任务计划，会自动改用用户 Startup 启动脚本。
 
@@ -72,6 +83,7 @@ python main.py
 ```
 root/
 ├── config/             # 配置文件
+├── led-bridge/         # 仰邦 BX-6 Java SDK Bridge 与依赖
 ├── PRD/                # 需求文档
 ├── src/
 │   ├── services/       # 核心服务 (UDP, Broadcast, API, Sync)
@@ -110,4 +122,6 @@ MQTT 默认连接 `111.6.173.61:1883`，用户名和 client-id 均使用本机 `
 
 * **TTS 问题**: 在 Windows 上，程序使用了 `pythoncom.CoInitialize()` 以确保多线程 TTS 稳定运行。
 * **防火墙**: 请确保 Windows 防火墙允许 UDP 39169 端口通信。
+* **LED 网络**: 电脑必须能访问控制卡 IP；若控制卡为 `192.168.100.1`，电脑网卡需配置在同一网段。
+* **Java**: 正式 Windows 发布 ZIP 已附带 Java 8 运行时；必须保留 `led-bridge` 目录并与 exe 放在同一级。直接从源码运行时需自行安装兼容 JDK/JRE。
 * **刷卡记录**: 每条刷卡记录会立即写入 `data/school.db`。打包后的 exe 会把 `data` 目录放在 exe 同级目录；如果把 exe 放到不同文件夹运行，会使用对应文件夹下的数据库。

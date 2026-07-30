@@ -17,7 +17,14 @@ class ConfigManager:
         "mqtt_reconnect_interval_seconds": 60,
         "mqtt_telemetry_topic": "v1/devices/me/telemetry",
         "mqtt_rpc_request_topic": "v1/devices/me/rpc/request/+",
-        "mqtt_rpc_response_topic_template": "v1/devices/me/rpc/response/{request_id}"
+        "mqtt_rpc_response_topic_template": "v1/devices/me/rpc/response/{request_id}",
+        "led_enabled": False,
+        "led_controller_ip": "192.168.100.1",
+        "led_controller_port": 5005,
+        "led_width": 1024,
+        "led_height": 96,
+        "led_page_seconds": 5,
+        "led_school_title": "数智家校\n放学系统"
     }
 
     def __new__(cls, config_path=None):
