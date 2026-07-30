@@ -1,5 +1,5 @@
 APP_NAME = "数智家校放学系统"
-APP_VERSION = "2.0.3"
+APP_VERSION = "2.1.0-beta.1"
 APP_VERSION_LABEL = f"版本 v{APP_VERSION}"
 
 WINDOWS_EXE_NAME = f"{APP_NAME}.exe"
