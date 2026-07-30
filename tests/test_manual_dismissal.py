@@ -57,9 +57,13 @@ class FakeApiService:
 class FakeLedService:
     def __init__(self):
         self.updates = []
+        self.window_states = []
 
     def mark_dismissing(self, class_id):
         self.updates.append(class_id)
+
+    def set_dismissal_active(self, active):
+        self.window_states.append(active)
 
 
 class ImmediateThread:
@@ -205,6 +209,15 @@ class ManualDismissalTests(unittest.TestCase):
 
         self.assertEqual(manager.led_service.updates, ["123"])
         self.assertEqual(manager.tts_worker.texts, ["一年级一班正在放学"])
+
+    def test_window_sync_tells_led_to_restore_when_administrative_window_is_inactive(self):
+        manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
+        manager.get_current_window_signature = lambda class_type=None: None
+
+        active = manager.sync_led_window_state()
+
+        self.assertFalse(active)
+        self.assertEqual(manager.led_service.window_states, [False])
 
 
 if __name__ == "__main__":

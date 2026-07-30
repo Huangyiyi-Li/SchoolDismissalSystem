@@ -2,8 +2,9 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from src.services.led_bridge_client import JavaLedBridge
+from src.services.led_bridge_client import JavaLedBridge, WINDOWS_CREATE_NO_WINDOW
 
 
 class LedBridgeClientTests(unittest.TestCase):
@@ -64,6 +65,25 @@ class LedBridgeClientTests(unittest.TestCase):
         bridge.display("192.168.100.1", 5005, [Path("/tmp/page.bmp")])
 
         self.assertEqual(timeouts, [20, 60])
+
+    def test_windows_java_process_is_started_without_console_window(self):
+        class FakeProcess:
+            returncode = 0
+
+            def communicate(self, timeout=None):
+                return ("OK\n", "")
+
+        bridge = JavaLedBridge(Path("C:/bridge"), java_command="java.exe")
+        with patch("src.services.led_bridge_client.os.name", "nt"), patch(
+            "src.services.led_bridge_client.subprocess.Popen",
+            return_value=FakeProcess(),
+        ) as popen:
+            bridge._run_default(["java.exe", "-version"], 20)
+
+        self.assertEqual(
+            popen.call_args.kwargs["creationflags"],
+            WINDOWS_CREATE_NO_WINDOW,
+        )
 
 
 if __name__ == "__main__":

@@ -5,6 +5,9 @@ import subprocess
 import threading
 
 
+WINDOWS_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+
 @dataclass(frozen=True)
 class BridgeResult:
     ok: bool
@@ -46,12 +49,16 @@ class JavaLedBridge:
         with self._process_lock:
             if self._shutdown_event.is_set():
                 raise OSError("LED Bridge 已停止")
+            window_options = {}
+            if os.name == "nt":
+                window_options["creationflags"] = WINDOWS_CREATE_NO_WINDOW
             process = subprocess.Popen(
                 command,
                 cwd=str(self.bridge_dir),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                **window_options,
             )
             self._active_process = process
         try:

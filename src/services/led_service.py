@@ -20,15 +20,31 @@ class LedService:
         output_dir=None,
         submitter=None,
         clock=None,
+        timer_factory=None,
+        dismissal_active=True,
     ):
         self.config = config_manager
         self.db = db_manager
         self.clock = clock or datetime.datetime.now
         self._status_date = self.clock().date()
         self._statuses = {}
+        self._status_timers = {}
         self._lock = threading.RLock()
         self._operation_lock = threading.Lock()
+        self._page_files_lock = threading.Lock()
         self._schedule_lock = threading.Lock()
+        self._timer_factory = timer_factory or threading.Timer
+        self._dismissal_active = bool(dismissal_active)
+        self._dismissal_state_initialized = dismissal_active is not None
+        self._display_timer = None
+        self._display_generation = 0
+        self._display_pages = []
+        self._display_index = 0
+        self._display_target = None
+        self._display_interval = 5.0
+        self._window_restore_pending = False
+        self._window_restore_in_flight = False
+        self._window_restore_epoch = 0
         self._refresh_scheduled = False
         self._refresh_requested = False
         self._shutdown_event = threading.Event()
@@ -46,6 +62,7 @@ class LedService:
     def _reset_if_new_day(self):
         today = self.clock().date()
         if today != self._status_date:
+            self._cancel_all_status_timers_locked()
             self._statuses.clear()
             self._status_date = today
 
@@ -55,10 +72,49 @@ class LedService:
             return self._statuses.get(str(class_id), "")
 
     def mark_dismissing(self, class_id):
-        self.set_class_status(class_id, self.STATUS_DISMISSING)
+        class_id = str(class_id or "").strip()
+        if not class_id:
+            return False
+        with self._lock:
+            self._reset_if_new_day()
+            if not self._dismissal_active:
+                return False
+            self._cancel_status_timer_locked(class_id)
+            changed = self._statuses.get(class_id, "") != self.STATUS_DISMISSING
+            self._statuses[class_id] = self.STATUS_DISMISSING
+            delay = float(self.config.get("led_dismissed_delay_seconds", 5))
+            timer = self._make_timer(
+                delay,
+                lambda: self._complete_dismissal(class_id, timer),
+            )
+            self._status_timers[class_id] = timer
+            timer.start()
+        if changed:
+            self.refresh_async()
+        return True
 
     def mark_dismissed(self, class_id):
+        class_id = str(class_id or "").strip()
+        if not class_id:
+            return False
+        with self._lock:
+            self._cancel_status_timer_locked(class_id)
         self.set_class_status(class_id, self.STATUS_DISMISSED)
+        return True
+
+    def _complete_dismissal(self, class_id, timer):
+        with self._lock:
+            if (
+                self._status_timers.get(class_id) is not timer
+                or not self._dismissal_active
+                or self._shutdown_event.is_set()
+            ):
+                return
+            self._status_timers.pop(class_id, None)
+            if self._statuses.get(class_id) != self.STATUS_DISMISSING:
+                return
+            self._statuses[class_id] = self.STATUS_DISMISSED
+        self.refresh_async()
 
     def set_class_status(self, class_id, status):
         class_id = str(class_id or "").strip()
@@ -70,16 +126,93 @@ class LedService:
             self._reset_if_new_day()
             if self._statuses.get(class_id, "") == status:
                 return
-            self._statuses[class_id] = status
+            if status:
+                self._statuses[class_id] = status
+            else:
+                self._statuses.pop(class_id, None)
         self.refresh_async()
 
     def reset_statuses(self):
         with self._lock:
+            self._cancel_all_status_timers_locked()
             self._statuses.clear()
             self._status_date = self.clock().date()
 
+    def set_dismissal_active(self, active):
+        active = bool(active)
+        with self._lock:
+            if self._dismissal_state_initialized and self._dismissal_active == active:
+                if active:
+                    return False
+                self._queue_window_restore()
+                return False
+            self._dismissal_state_initialized = True
+            self._dismissal_active = active
+            self._window_restore_epoch += 1
+        if active:
+            with self._lock:
+                self._window_restore_pending = False
+            self.refresh_async()
+            return True
+        self.reset_statuses()
+        had_session, _ = self._stop_display_session()
+        with self._lock:
+            self._window_restore_pending = bool(
+                self.config.get("led_enabled", False) or had_session
+            )
+        self._queue_window_restore()
+        return False
+
+    def _queue_window_restore(self):
+        with self._lock:
+            if (
+                not self._window_restore_pending
+                or self._window_restore_in_flight
+                or self._dismissal_active
+                or self._shutdown_event.is_set()
+            ):
+                return None
+            self._window_restore_in_flight = True
+            restore_epoch = self._window_restore_epoch
+            generation = self._display_generation
+            target_ip = self.config.get("led_controller_ip", "192.168.100.1")
+            target_port = int(self.config.get("led_controller_port", 5005))
+
+        def restore():
+            superseded = False
+            try:
+                with self._operation_lock:
+                    with self._lock:
+                        superseded = (
+                            self._dismissal_active
+                            or generation != self._display_generation
+                        )
+                    if superseded:
+                        result = BridgeResult(True, "恢复请求已被新的显示状态取代")
+                    else:
+                        result = self.bridge.clear(target_ip, target_port)
+            except Exception as exc:
+                result = BridgeResult(False, str(exc))
+            with self._lock:
+                self._window_restore_in_flight = False
+                if result.ok and restore_epoch == self._window_restore_epoch:
+                    self._window_restore_pending = False
+            self._log_failed_result("恢复原节目", result)
+            return result
+
+        try:
+            return self._submitter(restore)
+        except Exception:
+            with self._lock:
+                self._window_restore_in_flight = False
+            raise
+
     def refresh_async(self):
-        if self._shutdown_event.is_set() or not self.config.get("led_enabled", False):
+        if (
+            self._shutdown_event.is_set()
+            or not self.config.get("led_enabled", False)
+            or not self._dismissal_active
+        ):
             return None
         with self._schedule_lock:
             if self._refresh_scheduled:
@@ -121,10 +254,21 @@ class LedService:
         return result
 
     def refresh(self, ip=None, port=None, title=None, stay_seconds=None):
+        with self._lock:
+            if not self._dismissal_active:
+                return BridgeResult(True, "非放学时段，未控制 LED 屏")
         school_id = self.config.get("school_id")
         classes = self.db.get_led_classes(school_id)
         if not classes:
+            _, generation = self._stop_display_session()
             with self._operation_lock:
+                with self._lock:
+                    superseded = (
+                        generation != self._display_generation
+                        or not self._dismissal_active
+                    )
+                if superseded:
+                    return BridgeResult(True, "清除请求已被新的显示状态取代")
                 return self.bridge.clear(
                     ip or self.config.get("led_controller_ip", "192.168.100.1"),
                     int(port or self.config.get("led_controller_port", 5005)),
@@ -133,7 +277,7 @@ class LedService:
         with self._lock:
             self._reset_if_new_day()
             statuses = dict(self._statuses)
-        with self._operation_lock:
+        with self._page_files_lock:
             pages = render_led_pages(
                 title or self.config.get("led_school_title", "数智家校\n放学系统"),
                 classes,
@@ -143,11 +287,12 @@ class LedService:
                 height=int(self.config.get("led_height", 96)),
                 grades_per_page=2,
             )
-            result = self.bridge.display(
+            result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),
                 int(port or self.config.get("led_controller_port", 5005)),
                 pages,
-                stay_seconds=float(stay_seconds or self.config.get("led_page_seconds", 5)),
+                float(stay_seconds or self.config.get("led_page_seconds", 5)),
+                require_dismissal_active=True,
             )
         if not result.ok:
             print(f"[LED] Push failed: {result.message}")
@@ -166,6 +311,7 @@ class LedService:
 
         def clear():
             try:
+                self._stop_display_session()
                 with self._operation_lock:
                     result = self.bridge.clear(target_ip, target_port)
                 self._log_failed_result("清屏", result)
@@ -176,7 +322,39 @@ class LedService:
 
         return self._submitter(clear)
 
+    def reset_and_restore(self, ip=None, port=None):
+        self.reset_statuses()
+        _, generation = self._stop_display_session()
+        target_ip = ip or self.config.get("led_controller_ip", "192.168.100.1")
+        target_port = int(port or self.config.get("led_controller_port", 5005))
+        with self._operation_lock:
+            with self._lock:
+                superseded = generation != self._display_generation
+            if superseded:
+                result = BridgeResult(True, "恢复请求已被新的显示状态取代")
+            else:
+                result = self.bridge.clear(target_ip, target_port)
+        if result.ok:
+            return BridgeResult(True, "已清空班级状态并恢复控制卡原节目")
+        return result
+
+    def reset_and_restore_async(self, ip=None, port=None, clear_statuses=True):
+        def restore():
+            if clear_statuses:
+                return self.reset_and_restore(ip, port)
+            self._stop_display_session()
+            target_ip = ip or self.config.get("led_controller_ip", "192.168.100.1")
+            target_port = int(port or self.config.get("led_controller_port", 5005))
+            with self._operation_lock:
+                result = self.bridge.clear(target_ip, target_port)
+            if result.ok:
+                return BridgeResult(True, "已恢复控制卡原节目")
+            return result
+
+        return self._submitter(restore)
+
     def send_test_screen(self, ip=None, port=None, title=None, stay_seconds=None):
+        self.reset_statuses()
         school_id = self.config.get("school_id")
         classes = self.db.get_led_classes(school_id)
         if classes:
@@ -198,7 +376,7 @@ class LedService:
             ]
             statuses = {"LED-TEST-1": "连接正常"}
 
-        with self._operation_lock:
+        with self._page_files_lock:
             pages = render_led_pages(
                 title or self.config.get("led_school_title", "数智家校\n放学系统"),
                 classes,
@@ -208,15 +386,152 @@ class LedService:
                 height=int(self.config.get("led_height", 96)),
                 grades_per_page=2,
             )
-            return self.bridge.display(
+            return self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),
                 int(port or self.config.get("led_controller_port", 5005)),
                 pages,
-                stay_seconds=float(stay_seconds or self.config.get("led_page_seconds", 5)),
+                float(stay_seconds or self.config.get("led_page_seconds", 5)),
             )
+
+    def _start_display_session(
+        self,
+        ip,
+        port,
+        pages,
+        stay_seconds,
+        require_dismissal_active=False,
+    ):
+        pages = list(pages)
+        if not pages:
+            return BridgeResult(False, "没有可发送的 LED 页面")
+        with self._lock:
+            if require_dismissal_active and not self._dismissal_active:
+                return BridgeResult(True, "放学时段已结束，未发送 LED 页面")
+            self._cancel_display_timer_locked()
+            self._display_generation += 1
+            generation = self._display_generation
+            self._display_pages = pages
+            self._display_index = 0
+            self._display_target = (ip, int(port))
+            self._display_interval = max(1.0, float(stay_seconds))
+            first_page = pages[0]
+        with self._operation_lock:
+            with self._lock:
+                superseded = (
+                    generation != self._display_generation
+                    or (
+                        require_dismissal_active
+                        and not self._dismissal_active
+                    )
+                )
+                interval = self._display_interval
+            if superseded:
+                return BridgeResult(True, "显示请求已被新的操作取代")
+            result = self.bridge.display(
+                ip,
+                int(port),
+                [first_page],
+                stay_seconds=interval,
+            )
+        if result.ok:
+            self._schedule_display_rotation(generation)
+            if len(pages) > 1:
+                return BridgeResult(
+                    True,
+                    f"已启动 {len(pages)} 个 LED 页面轮播，每页 {self._display_interval:g} 秒",
+                )
+        return result
+
+    def _schedule_display_rotation(self, generation):
+        with self._lock:
+            if (
+                generation != self._display_generation
+                or len(self._display_pages) <= 1
+                or self._shutdown_event.is_set()
+            ):
+                return
+            timer = self._make_timer(
+                self._display_interval,
+                lambda: self._queue_display_rotation(generation, timer),
+            )
+            self._display_timer = timer
+            timer.start()
+
+    def _queue_display_rotation(self, generation, timer):
+        with self._lock:
+            if (
+                generation != self._display_generation
+                or self._display_timer is not timer
+                or self._shutdown_event.is_set()
+            ):
+                return
+            self._display_timer = None
+        try:
+            self._submitter(lambda: self._run_display_rotation(generation))
+        except Exception as exc:
+            print(f"[LED] Failed to queue page rotation: {exc}")
+
+    def _run_display_rotation(self, generation):
+        with self._lock:
+            if (
+                generation != self._display_generation
+                or len(self._display_pages) <= 1
+                or self._shutdown_event.is_set()
+            ):
+                return None
+            self._display_index = (self._display_index + 1) % len(self._display_pages)
+            page = self._display_pages[self._display_index]
+            ip, port = self._display_target
+            interval = self._display_interval
+        with self._page_files_lock:
+            with self._operation_lock:
+                with self._lock:
+                    superseded = generation != self._display_generation
+                if superseded:
+                    return BridgeResult(True, "翻页请求已被新的操作取代")
+                result = self.bridge.display(ip, port, [page], stay_seconds=interval)
+        if not result.ok:
+            self._log_failed_result("翻页", result)
+        self._schedule_display_rotation(generation)
+        return result
+
+    def _stop_display_session(self):
+        with self._lock:
+            had_session = bool(self._display_pages)
+            self._cancel_display_timer_locked()
+            self._display_generation += 1
+            self._display_pages = []
+            self._display_target = None
+            return had_session, self._display_generation
+
+    def _cancel_display_timer_locked(self):
+        timer = self._display_timer
+        self._display_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _cancel_status_timer_locked(self, class_id):
+        timer = self._status_timers.pop(class_id, None)
+        if timer is not None:
+            timer.cancel()
+
+    def _cancel_all_status_timers_locked(self):
+        timers = list(self._status_timers.values())
+        self._status_timers.clear()
+        for timer in timers:
+            timer.cancel()
+
+    def _make_timer(self, delay, callback):
+        timer = self._timer_factory(delay, callback)
+        if hasattr(timer, "daemon"):
+            timer.daemon = True
+        return timer
 
     def shutdown(self):
         self._shutdown_event.set()
+        self._stop_display_session()
+        with self._lock:
+            self._cancel_all_status_timers_locked()
         with self._schedule_lock:
             self._refresh_requested = False
         if hasattr(self.bridge, "shutdown"):

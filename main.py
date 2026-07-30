@@ -26,7 +26,9 @@ def main():
     # Initialize Core Services
     config_manager = ConfigManager()
     db_manager = DatabaseManager()
-    led_service = LedService(config_manager, db_manager)
+    # Until the first schedule check completes, never overwrite the controller's
+    # original Ledshow program.
+    led_service = LedService(config_manager, db_manager, dismissal_active=None)
     
     # API & Sync
     from src.services.api_service import ApiService

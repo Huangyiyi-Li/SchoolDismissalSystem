@@ -17,6 +17,7 @@ class LedConfigTests(unittest.TestCase):
             config.set("led_controller_ip", "10.20.30.40")
             config.set("led_controller_port", 5100)
             config.set("led_page_seconds", 8)
+            config.set("led_dismissed_delay_seconds", 3)
             config.save()
 
             ConfigManager._instance = None
@@ -25,6 +26,7 @@ class LedConfigTests(unittest.TestCase):
             self.assertEqual(reloaded.get("led_controller_ip"), "10.20.30.40")
             self.assertEqual(reloaded.get("led_controller_port"), 5100)
             self.assertEqual(reloaded.get("led_page_seconds"), 8)
+            self.assertEqual(reloaded.get("led_dismissed_delay_seconds"), 3)
 
     def test_defaults_match_current_bx_6e1xp_installation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -34,6 +36,7 @@ class LedConfigTests(unittest.TestCase):
             self.assertEqual(config.get("led_controller_ip"), "192.168.100.1")
             self.assertEqual(config.get("led_controller_port"), 5005)
             self.assertEqual((config.get("led_width"), config.get("led_height")), (1024, 96))
+            self.assertEqual(config.get("led_dismissed_delay_seconds"), 5)
 
 
 if __name__ == "__main__":

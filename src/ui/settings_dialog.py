@@ -91,6 +91,12 @@ class SettingsDialog(QDialog):
         self.led_page_seconds_edit.setPlaceholderText("每页停留秒数")
         led_form.addRow("翻页间隔(秒):", self.led_page_seconds_edit)
 
+        self.led_dismissed_delay_edit = QLineEdit(
+            str(self.config.get("led_dismissed_delay_seconds", 5))
+        )
+        self.led_dismissed_delay_edit.setPlaceholderText("放学中变为已放学的秒数")
+        led_form.addRow("已放学延迟(秒):", self.led_dismissed_delay_edit)
+
         self.led_title_edit = QPlainTextEdit()
         self.led_title_edit.setPlainText(
             self.config.get("led_school_title", "数智家校\n放学系统")
@@ -106,6 +112,9 @@ class SettingsDialog(QDialog):
         self.led_screen_btn = QPushButton("发送测试画面")
         self.led_screen_btn.clicked.connect(self.test_led_screen)
         led_test_layout.addWidget(self.led_screen_btn)
+        self.led_restore_btn = QPushButton("清空状态/恢复原节目")
+        self.led_restore_btn.clicked.connect(self.reset_led_screen)
+        led_test_layout.addWidget(self.led_restore_btn)
         led_form.addRow("设备测试:", led_test_layout)
         layout.addWidget(led_group)
 
@@ -169,6 +178,10 @@ class SettingsDialog(QDialog):
         self.config.set("led_controller_ip", led_values["ip"])
         self.config.set("led_controller_port", led_values["port"])
         self.config.set("led_page_seconds", led_values["page_seconds"])
+        self.config.set(
+            "led_dismissed_delay_seconds",
+            led_values["dismissed_delay_seconds"],
+        )
         self.config.set("led_school_title", led_values["title"])
         # Time settings removed
         self.config.save()
@@ -254,6 +267,15 @@ class SettingsDialog(QDialog):
         except ValueError:
             QMessageBox.warning(self, "错误", "翻页间隔必须是 1-300 秒")
             return None
+        try:
+            dismissed_delay_seconds = float(
+                self.led_dismissed_delay_edit.text().strip()
+            )
+            if not 1 <= dismissed_delay_seconds <= 300:
+                raise ValueError()
+        except ValueError:
+            QMessageBox.warning(self, "错误", "已放学延迟必须是 1-300 秒")
+            return None
         if not title:
             QMessageBox.warning(self, "错误", "LED 左侧标题不能为空")
             return None
@@ -261,6 +283,7 @@ class SettingsDialog(QDialog):
             "ip": ip,
             "port": port,
             "page_seconds": page_seconds,
+            "dismissed_delay_seconds": dismissed_delay_seconds,
             "title": title,
         }
 
@@ -273,6 +296,7 @@ class SettingsDialog(QDialog):
             return
         self.led_connect_btn.setEnabled(False)
         self.led_screen_btn.setEnabled(False)
+        self.led_restore_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
         self._led_action_running = True
 
@@ -305,10 +329,19 @@ class SettingsDialog(QDialog):
             )
         )
 
+    def reset_led_screen(self):
+        self._run_led_action(
+            lambda values: self.led_service.reset_and_restore(
+                ip=values["ip"],
+                port=values["port"],
+            )
+        )
+
     def _show_led_result(self, ok, message):
         self._led_action_running = False
         self.led_connect_btn.setEnabled(True)
         self.led_screen_btn.setEnabled(True)
+        self.led_restore_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
         if self._closing:
             return

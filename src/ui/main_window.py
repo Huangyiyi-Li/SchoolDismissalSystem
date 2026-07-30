@@ -71,6 +71,7 @@ class MainWindow(QMainWindow):
         # Start timer to refresh time display
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_status_bar)
+        self.broadcast_manager.sync_led_window_state()
         self.timer.start(1000)
 
         # Apply Modern Stylesheet
@@ -376,13 +377,15 @@ class MainWindow(QMainWindow):
         self.window_label.setText(format_schedule_status_html(window_text))
 
         # Update Status
+        administrative_active = self.broadcast_manager.sync_led_window_state()
+        club_active = self.broadcast_manager.is_within_time_window(class_type=2)
         if self.config.get("test_mode", False):
              self.status_label.setText("当前状态: [测试模式] 任意时间仅播报，不推送")
              self.status_label.setStyleSheet("color: blue; font-weight: bold;")
-        elif self.broadcast_manager.is_within_time_window(class_type=1) or self.broadcast_manager.is_within_time_window(class_type=2):
+        elif administrative_active or club_active:
              states = []
-             for class_type in (1, 2):
-                 state = "监测中" if self.broadcast_manager.is_within_time_window(class_type=class_type) else "待机"
+             for class_type, active in ((1, administrative_active), (2, club_active)):
+                 state = "监测中" if active else "待机"
                  states.append(f"{format_class_type_label(class_type)}{state}")
              self.status_label.setText("当前状态: " + " / ".join(states))
              self.status_label.setStyleSheet("color: green; font-weight: bold;")

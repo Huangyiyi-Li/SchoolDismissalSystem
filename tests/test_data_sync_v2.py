@@ -55,6 +55,30 @@ class FailedScheduleApi(FakeApi):
         return None
 
 
+class OrderingApi(FakeApi):
+    def __init__(self, events):
+        self.events = events
+
+    def get_classes(self):
+        self.events.append("classes")
+        return super().get_classes()
+
+    def get_school_dismissal_schedule(self):
+        self.events.append("schedule")
+        return super().get_school_dismissal_schedule()
+
+
+class OrderingLedService:
+    def __init__(self, events):
+        self.events = events
+
+    def set_dismissal_active(self, active):
+        self.events.append(("led-state", active))
+
+    def refresh_async(self):
+        self.events.append("led-refresh")
+
+
 class FakeConfig:
     def __init__(self, values=None):
         self.values = values or {}
@@ -172,6 +196,31 @@ class DataSyncV2Tests(unittest.TestCase):
 
         self.assertTrue(worker.pre_window_timer.stopped)
         self.assertEqual(worker.pre_window_timer.started_with, 88 * 60 * 1000)
+
+    def test_sync_updates_schedule_and_window_state_before_refreshing_led(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            events = []
+            db = DatabaseManager(db_path=os.path.join(tmpdir, "school.db"))
+            config = FakeConfig()
+            worker = DataSyncWorker(
+                OrderingApi(events),
+                db,
+                config,
+                clock=lambda: datetime.datetime(2026, 6, 15, 15, 45),
+                led_service=OrderingLedService(events),
+            )
+
+            worker.sync_all()
+
+            self.assertEqual(
+                events,
+                [
+                    "classes",
+                    "schedule",
+                    ("led-state", True),
+                    "led-refresh",
+                ],
+            )
 
 
 if __name__ == "__main__":
