@@ -24,6 +24,7 @@ class ConfigManager:
         "led_width": 1024,
         "led_height": 96,
         "led_page_seconds": 5,
+        "led_grades_per_page": 2,
         "led_dismissed_delay_seconds": 5,
         "led_school_title": "数智家校\n放学系统"
     }

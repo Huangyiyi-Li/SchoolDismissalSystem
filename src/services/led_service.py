@@ -58,12 +58,82 @@ class LedService:
         root = Path(get_app_root())
         self.output_dir = Path(output_dir or (root / "data" / "led-pages"))
         self.bridge = bridge or JavaLedBridge(root / "led-bridge")
+        self._restore_persisted_statuses()
+
+    def _school_id(self):
+        value = self.config.get("school_id")
+        return str(value).strip() if value is not None else ""
+
+    def _persist_status_locked(self, class_id, status, dismiss_due_at=None):
+        school_id = self._school_id()
+        if not school_id:
+            return
+        self.db.save_led_class_status(
+            school_id,
+            class_id,
+            self._status_date.isoformat(),
+            status,
+            dismiss_due_at.isoformat() if dismiss_due_at else None,
+        )
+
+    def _clear_persisted_statuses_locked(self):
+        school_id = self._school_id()
+        if school_id:
+            self.db.clear_led_class_statuses(school_id)
+
+    def _restore_persisted_statuses(self):
+        school_id = self._school_id()
+        if not school_id:
+            return
+        now = self.clock()
+        rows = self.db.get_led_class_statuses(school_id, now.date().isoformat())
+        with self._lock:
+            for row in rows:
+                class_id = str(row.get("class_id") or "").strip()
+                status = row.get("status")
+                if not class_id or status not in (
+                    self.STATUS_DISMISSING,
+                    self.STATUS_DISMISSED,
+                ):
+                    continue
+                due_raw = row.get("dismiss_due_at")
+                if status == self.STATUS_DISMISSING and due_raw:
+                    try:
+                        due_at = datetime.datetime.fromisoformat(due_raw)
+                    except (TypeError, ValueError):
+                        due_at = now
+                    remaining = (due_at - now).total_seconds()
+                    if remaining <= 0:
+                        self._statuses[class_id] = self.STATUS_DISMISSED
+                        self._persist_status_locked(
+                            class_id,
+                            self.STATUS_DISMISSED,
+                        )
+                        continue
+                    self._statuses[class_id] = status
+                    timer = self._make_timer(
+                        remaining,
+                        lambda class_id=class_id: self._complete_restored_dismissal(
+                            class_id
+                        ),
+                    )
+                    self._status_timers[class_id] = timer
+                    timer.start()
+                else:
+                    self._statuses[class_id] = status
+
+    def _complete_restored_dismissal(self, class_id):
+        with self._lock:
+            timer = self._status_timers.get(class_id)
+        if timer is not None:
+            self._complete_dismissal(class_id, timer)
 
     def _reset_if_new_day(self):
         today = self.clock().date()
         if today != self._status_date:
             self._cancel_all_status_timers_locked()
             self._statuses.clear()
+            self._clear_persisted_statuses_locked()
             self._status_date = today
 
     def get_status(self, class_id):
@@ -83,6 +153,12 @@ class LedService:
             changed = self._statuses.get(class_id, "") != self.STATUS_DISMISSING
             self._statuses[class_id] = self.STATUS_DISMISSING
             delay = float(self.config.get("led_dismissed_delay_seconds", 5))
+            dismiss_due_at = self.clock() + datetime.timedelta(seconds=delay)
+            self._persist_status_locked(
+                class_id,
+                self.STATUS_DISMISSING,
+                dismiss_due_at,
+            )
             timer = self._make_timer(
                 delay,
                 lambda: self._complete_dismissal(class_id, timer),
@@ -106,7 +182,10 @@ class LedService:
         with self._lock:
             if (
                 self._status_timers.get(class_id) is not timer
-                or not self._dismissal_active
+                or (
+                    not self._dismissal_active
+                    and self._dismissal_state_initialized
+                )
                 or self._shutdown_event.is_set()
             ):
                 return
@@ -114,6 +193,7 @@ class LedService:
             if self._statuses.get(class_id) != self.STATUS_DISMISSING:
                 return
             self._statuses[class_id] = self.STATUS_DISMISSED
+            self._persist_status_locked(class_id, self.STATUS_DISMISSED)
         self.refresh_async()
 
     def set_class_status(self, class_id, status):
@@ -128,14 +208,17 @@ class LedService:
                 return
             if status:
                 self._statuses[class_id] = status
+                self._persist_status_locked(class_id, status)
             else:
                 self._statuses.pop(class_id, None)
+                self._clear_persisted_statuses_locked()
         self.refresh_async()
 
     def reset_statuses(self):
         with self._lock:
             self._cancel_all_status_timers_locked()
             self._statuses.clear()
+            self._clear_persisted_statuses_locked()
             self._status_date = self.clock().date()
 
     def set_dismissal_active(self, active):
@@ -285,7 +368,7 @@ class LedService:
                 self.output_dir,
                 width=int(self.config.get("led_width", 1024)),
                 height=int(self.config.get("led_height", 96)),
-                grades_per_page=2,
+                grades_per_page=int(self.config.get("led_grades_per_page", 2)),
             )
             result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),
@@ -353,7 +436,14 @@ class LedService:
 
         return self._submitter(restore)
 
-    def send_test_screen(self, ip=None, port=None, title=None, stay_seconds=None):
+    def send_test_screen(
+        self,
+        ip=None,
+        port=None,
+        title=None,
+        stay_seconds=None,
+        grades_per_page=None,
+    ):
         self.reset_statuses()
         school_id = self.config.get("school_id")
         classes = self.db.get_led_classes(school_id)
@@ -384,7 +474,11 @@ class LedService:
                 self.output_dir,
                 width=int(self.config.get("led_width", 1024)),
                 height=int(self.config.get("led_height", 96)),
-                grades_per_page=2,
+                grades_per_page=int(
+                    grades_per_page
+                    if grades_per_page is not None
+                    else self.config.get("led_grades_per_page", 2)
+                ),
             )
             return self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),

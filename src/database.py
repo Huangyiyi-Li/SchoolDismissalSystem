@@ -84,6 +84,20 @@ class DatabaseManager:
             )
         ''')
 
+        # Same-day LED dismissal status. This is separate from the class catalog
+        # so restarting the desktop client does not erase the live dismissal board.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS led_class_statuses (
+                school_id TEXT NOT NULL,
+                class_id TEXT NOT NULL,
+                status_date TEXT NOT NULL,
+                status TEXT NOT NULL,
+                dismiss_due_at TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (school_id, class_id, status_date)
+            )
+        ''')
+
         # Devices table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS devices (
@@ -337,6 +351,78 @@ class DatabaseManager:
         rows = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return rows
+
+    def save_led_class_status(
+        self,
+        school_id,
+        class_id,
+        status_date,
+        status,
+        dismiss_due_at=None,
+    ):
+        if not school_id or not class_id or not status_date or not status:
+            return False
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO led_class_statuses
+                    (school_id, class_id, status_date, status, dismiss_due_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    str(school_id),
+                    str(class_id),
+                    str(status_date),
+                    str(status),
+                    dismiss_due_at,
+                ),
+            )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+    def get_led_class_statuses(self, school_id, status_date):
+        if not school_id or not status_date:
+            return []
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT class_id, status, dismiss_due_at
+            FROM led_class_statuses
+            WHERE school_id = ? AND status_date = ?
+            ORDER BY updated_at, class_id
+            """,
+            (str(school_id), str(status_date)),
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
+
+    def clear_led_class_statuses(self, school_id, status_date=None):
+        if not school_id:
+            return
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        if status_date is None:
+            cursor.execute(
+                "DELETE FROM led_class_statuses WHERE school_id = ?",
+                (str(school_id),),
+            )
+        else:
+            cursor.execute(
+                """
+                DELETE FROM led_class_statuses
+                WHERE school_id = ? AND status_date = ?
+                """,
+                (str(school_id), str(status_date)),
+            )
+        conn.commit()
+        conn.close()
 
     def get_all_mappings(self):
         conn = sqlite3.connect(self.db_path)

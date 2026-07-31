@@ -3,6 +3,7 @@ import tempfile
 import threading
 import time
 import unittest
+import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +21,7 @@ class FakeConfig:
             "led_controller_port": 5005,
             "led_school_title": "健康路小学\n数智家校\n放学系统",
             "led_page_seconds": 5,
+            "led_grades_per_page": 2,
             "led_dismissed_delay_seconds": 5,
             **(values or {}),
         }
@@ -310,6 +312,166 @@ class LedServiceTests(unittest.TestCase):
 
             self.assertEqual(len(bridge.displays), 2)
             self.assertEqual(bridge.displays[1][2][0].name, "led-page-02.bmp")
+
+    def test_six_grades_per_page_renders_six_grades_on_one_page(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            for index in range(2, 7):
+                db.upsert_led_class(
+                    "40125",
+                    1,
+                    str(index * 100 + 1),
+                    f"{index}年级",
+                    f"{index}年级一班",
+                    source_order=index - 1,
+                )
+            bridge = FakeBridge()
+            service = LedService(
+                FakeConfig(
+                    {
+                        "school_id": "40125",
+                        "led_grades_per_page": 6,
+                    }
+                ),
+                db,
+                bridge=bridge,
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+
+            result = service.refresh()
+
+            self.assertTrue(result.ok)
+            self.assertEqual(len(bridge.displays), 1)
+            self.assertEqual(len(list((Path(tmpdir) / "pages").glob("led-page-*.bmp"))), 1)
+
+    def test_dismissed_status_survives_service_restart_on_same_day(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            config = FakeConfig({"school_id": "40125"})
+            now = datetime.datetime(2026, 7, 31, 17, 0, 0)
+            first = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-1",
+                submitter=lambda task: task(),
+                clock=lambda: now,
+            )
+            first.mark_dismissed("101")
+            first.shutdown()
+
+            restarted = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-2",
+                submitter=lambda task: task(),
+                clock=lambda: now,
+            )
+
+            self.assertEqual(restarted.get_status("101"), "已放学")
+
+    def test_dismissing_countdown_resumes_with_remaining_time_after_restart(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            config = FakeConfig(
+                {
+                    "school_id": "40125",
+                    "led_dismissed_delay_seconds": 5,
+                }
+            )
+            current = [datetime.datetime(2026, 7, 31, 17, 0, 0)]
+            first_timers = FakeTimerFactory()
+            first = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-1",
+                submitter=lambda task: task(),
+                clock=lambda: current[0],
+                timer_factory=first_timers,
+            )
+            first.mark_dismissing("101")
+            first.shutdown()
+            current[0] += datetime.timedelta(seconds=2)
+            resumed_timers = FakeTimerFactory()
+
+            restarted = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-2",
+                submitter=lambda task: task(),
+                clock=lambda: current[0],
+                timer_factory=resumed_timers,
+            )
+
+            self.assertEqual(restarted.get_status("101"), "放学中")
+            self.assertAlmostEqual(resumed_timers.timers[0].delay, 3)
+            resumed_timers.timers[0].fire()
+            self.assertEqual(restarted.get_status("101"), "已放学")
+
+    def test_restored_countdown_can_finish_before_initial_window_sync(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            config = FakeConfig(
+                {
+                    "school_id": "40125",
+                    "led_dismissed_delay_seconds": 5,
+                }
+            )
+            current = [datetime.datetime(2026, 7, 31, 17, 0, 0)]
+            first = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-1",
+                submitter=lambda task: task(),
+                clock=lambda: current[0],
+            )
+            first.mark_dismissing("101")
+            first.shutdown()
+            current[0] += datetime.timedelta(seconds=2)
+            timers = FakeTimerFactory()
+            restarted = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-2",
+                submitter=lambda task: task(),
+                clock=lambda: current[0],
+                timer_factory=timers,
+                dismissal_active=None,
+            )
+
+            timers.timers[0].fire()
+
+            self.assertEqual(restarted.get_status("101"), "已放学")
+
+    def test_reset_statuses_removes_persisted_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            config = FakeConfig({"school_id": "40125"})
+            first = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-1",
+                submitter=lambda task: task(),
+            )
+            first.mark_dismissed("101")
+            first.reset_statuses()
+
+            restarted = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-2",
+                submitter=lambda task: task(),
+            )
+
+            self.assertEqual(restarted.get_status("101"), "")
 
     def test_reset_and_restore_clears_status_and_deletes_dynamic_area(self):
         with tempfile.TemporaryDirectory() as tmpdir:

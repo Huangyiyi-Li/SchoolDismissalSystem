@@ -29,12 +29,15 @@ class FakeDb:
 
 
 class FakeConfig:
-    def get(self, key, default=None):
-        values = {
+    def __init__(self, values=None):
+        self.values = {
             "test_mode": True,
             "deduplication_interval_seconds": 300,
+            **(values or {}),
         }
-        return values.get(key, default)
+
+    def get(self, key, default=None):
+        return self.values.get(key, default)
 
 
 class FakeTtsWorker:
@@ -210,8 +213,19 @@ class ManualDismissalTests(unittest.TestCase):
         self.assertEqual(manager.led_service.updates, ["123"])
         self.assertEqual(manager.tts_worker.texts, ["一年级一班正在放学"])
 
-    def test_window_sync_tells_led_to_restore_when_administrative_window_is_inactive(self):
+    def test_test_mode_activates_led_when_administrative_window_is_inactive(self):
         manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
+        manager.config = FakeConfig({"test_mode": True})
+        manager.get_current_window_signature = lambda class_type=None: None
+
+        active = manager.sync_led_window_state()
+
+        self.assertTrue(active)
+        self.assertEqual(manager.led_service.window_states, [True])
+
+    def test_normal_mode_restores_led_when_administrative_window_is_inactive(self):
+        manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
+        manager.config = FakeConfig({"test_mode": False})
         manager.get_current_window_signature = lambda class_type=None: None
 
         active = manager.sync_led_window_state()

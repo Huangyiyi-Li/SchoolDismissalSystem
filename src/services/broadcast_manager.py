@@ -321,7 +321,9 @@ class BroadcastManager(QObject):
         return self.get_current_window_signature(class_type=class_type) is not None
 
     def sync_led_window_state(self):
-        active = self.is_within_time_window(class_type=1)
+        active = self.is_within_time_window(class_type=1) or bool(
+            self.config.get("test_mode", False)
+        )
         led_service = getattr(self, "led_service", None)
         if led_service:
             led_service.set_dismissal_active(active)

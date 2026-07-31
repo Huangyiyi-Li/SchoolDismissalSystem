@@ -264,7 +264,8 @@ class MainWindow(QMainWindow):
             reply = QMessageBox.question(
                 self,
                 "确认开启测试模式",
-                "开启测试模式后，刷卡只会本地播报，不会推送到服务端后台。确认开启吗？",
+                "开启测试模式后，LED 屏会切换为放学信息；刷卡只会本地播报，"
+                "不会推送到服务端后台。确认开启吗？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -274,6 +275,9 @@ class MainWindow(QMainWindow):
                 self.test_mode_check.blockSignals(False)
                 return
         self.config.set("test_mode", is_test)
+        # Apply the effective LED window immediately instead of waiting for the
+        # periodic status timer.
+        self.broadcast_manager.sync_led_window_state()
         # ConfigManager set doesn't auto-save always? We should save or keep runtime.
         # BroadcastManager reads from config each time in new logic?
         # Actually logic reads: self.config.get("test_mode") in process_swipe.

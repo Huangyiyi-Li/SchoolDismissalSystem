@@ -91,6 +91,12 @@ class SettingsDialog(QDialog):
         self.led_page_seconds_edit.setPlaceholderText("每页停留秒数")
         led_form.addRow("翻页间隔(秒):", self.led_page_seconds_edit)
 
+        self.led_grades_per_page_edit = QLineEdit(
+            str(self.config.get("led_grades_per_page", 2))
+        )
+        self.led_grades_per_page_edit.setPlaceholderText("每屏显示 1-6 个年级")
+        led_form.addRow("每屏年级数:", self.led_grades_per_page_edit)
+
         self.led_dismissed_delay_edit = QLineEdit(
             str(self.config.get("led_dismissed_delay_seconds", 5))
         )
@@ -178,6 +184,7 @@ class SettingsDialog(QDialog):
         self.config.set("led_controller_ip", led_values["ip"])
         self.config.set("led_controller_port", led_values["port"])
         self.config.set("led_page_seconds", led_values["page_seconds"])
+        self.config.set("led_grades_per_page", led_values["grades_per_page"])
         self.config.set(
             "led_dismissed_delay_seconds",
             led_values["dismissed_delay_seconds"],
@@ -276,6 +283,13 @@ class SettingsDialog(QDialog):
         except ValueError:
             QMessageBox.warning(self, "错误", "已放学延迟必须是 1-300 秒")
             return None
+        try:
+            grades_per_page = int(self.led_grades_per_page_edit.text().strip())
+            if not 1 <= grades_per_page <= 6:
+                raise ValueError()
+        except ValueError:
+            QMessageBox.warning(self, "错误", "每屏年级数必须是 1-6 的整数")
+            return None
         if not title:
             QMessageBox.warning(self, "错误", "LED 左侧标题不能为空")
             return None
@@ -283,6 +297,7 @@ class SettingsDialog(QDialog):
             "ip": ip,
             "port": port,
             "page_seconds": page_seconds,
+            "grades_per_page": grades_per_page,
             "dismissed_delay_seconds": dismissed_delay_seconds,
             "title": title,
         }
@@ -326,6 +341,7 @@ class SettingsDialog(QDialog):
                 port=values["port"],
                 title=values["title"],
                 stay_seconds=values["page_seconds"],
+                grades_per_page=values["grades_per_page"],
             )
         )
 

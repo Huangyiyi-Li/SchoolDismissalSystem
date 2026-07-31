@@ -94,7 +94,7 @@ class DataSyncWorker(QObject):
                 self.config.get("time_window_end", "18:30"),
                 now=self.clock(),
                 class_type=1,
-            )
+            ) or bool(self.config.get("test_mode", False))
             transition_refresh = self.led_service.set_dismissal_active(active)
             if active and not transition_refresh:
                 self.led_service.refresh_async()
