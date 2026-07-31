@@ -424,6 +424,21 @@ class DatabaseManager:
         conn.commit()
         conn.close()
 
+    def delete_led_class_status(self, school_id, class_id, status_date):
+        if not school_id or not class_id or not status_date:
+            return
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM led_class_statuses
+            WHERE school_id = ? AND class_id = ? AND status_date = ?
+            """,
+            (str(school_id), str(class_id), str(status_date)),
+        )
+        conn.commit()
+        conn.close()
+
     def get_all_mappings(self):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()

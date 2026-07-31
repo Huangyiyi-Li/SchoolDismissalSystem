@@ -449,6 +449,39 @@ class LedServiceTests(unittest.TestCase):
 
             self.assertEqual(restarted.get_status("101"), "已放学")
 
+    def test_stale_restored_timer_cannot_finish_restarted_countdown_early(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            config = FakeConfig({"school_id": "40125"})
+            current = [datetime.datetime(2026, 7, 31, 17, 0, 0)]
+            first = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-1",
+                submitter=lambda task: task(),
+                clock=lambda: current[0],
+            )
+            first.mark_dismissing("101")
+            first.shutdown()
+            current[0] += datetime.timedelta(seconds=2)
+            timers = FakeTimerFactory()
+            restarted = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-2",
+                submitter=lambda task: task(),
+                clock=lambda: current[0],
+                timer_factory=timers,
+            )
+            stale_timer = timers.timers[0]
+            restarted.mark_dismissing("101")
+
+            stale_timer.callback()
+
+            self.assertEqual(restarted.get_status("101"), "放学中")
+
     def test_reset_statuses_removes_persisted_status(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = self.make_db(tmpdir)
@@ -472,6 +505,111 @@ class LedServiceTests(unittest.TestCase):
             )
 
             self.assertEqual(restarted.get_status("101"), "")
+
+    def test_clearing_one_class_keeps_other_persisted_statuses(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            db.upsert_led_class(
+                "40125", 1, "102", "一年级", "一年级二班", source_order=1
+            )
+            config = FakeConfig({"school_id": "40125"})
+            service = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-1",
+                submitter=lambda task: task(),
+            )
+            service.mark_dismissed("101")
+            service.mark_dismissed("102")
+
+            service.set_class_status("101", "")
+
+            restarted = LedService(
+                config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-2",
+                submitter=lambda task: task(),
+            )
+            self.assertEqual(restarted.get_status("101"), "")
+            self.assertEqual(restarted.get_status("102"), "已放学")
+
+    def test_reset_can_clear_old_school_without_erasing_new_school_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            db.upsert_led_class(
+                "50000", 1, "201", "二年级", "二年级一班", source_order=0
+            )
+            old_config = FakeConfig({"school_id": "40125"})
+            old_service = LedService(
+                old_config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-old",
+                submitter=lambda task: task(),
+            )
+            old_service.mark_dismissed("101")
+            new_config = FakeConfig({"school_id": "50000"})
+            new_service = LedService(
+                new_config,
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages-new",
+                submitter=lambda task: task(),
+            )
+            new_service.mark_dismissed("201")
+            old_config.values["school_id"] = "50000"
+
+            old_service.reset_statuses(school_id="40125")
+
+            self.assertEqual(db.get_led_class_statuses("40125", old_service._status_date.isoformat()), [])
+            self.assertEqual(len(db.get_led_class_statuses("50000", old_service._status_date.isoformat())), 1)
+
+    def test_public_dismissing_status_uses_configured_countdown(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            timers = FakeTimerFactory()
+            service = LedService(
+                FakeConfig(
+                    {
+                        "school_id": "40125",
+                        "led_dismissed_delay_seconds": 3,
+                    }
+                ),
+                self.make_db(tmpdir),
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+                timer_factory=timers,
+            )
+
+            service.set_class_status("101", "放学中")
+
+            self.assertEqual(timers.timers[0].delay, 3)
+            timers.timers[0].fire()
+            self.assertEqual(service.get_status("101"), "已放学")
+
+    def test_legacy_dismissing_status_without_due_time_restores_as_dismissed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            now = datetime.datetime(2026, 7, 31, 17, 0, 0)
+            db.save_led_class_status(
+                "40125",
+                "101",
+                now.date().isoformat(),
+                "放学中",
+            )
+
+            service = LedService(
+                FakeConfig({"school_id": "40125"}),
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+                clock=lambda: now,
+            )
+
+            self.assertEqual(service.get_status("101"), "已放学")
 
     def test_reset_and_restore_clears_status_and_deletes_dynamic_area(self):
         with tempfile.TemporaryDirectory() as tmpdir:

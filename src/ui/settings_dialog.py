@@ -205,7 +205,7 @@ class SettingsDialog(QDialog):
             self.led_service.clear_async(old_led_ip, old_led_port)
         if school_id_changed or api_base_url_changed:
             if self.led_service and school_id_changed:
-                self.led_service.reset_statuses()
+                self.led_service.reset_statuses(school_id=old_school_id)
             self.clear_local_school_data()
             msg += "\n\n检测到学校 ID 或接口地址已变更，正在尝试应用并同步..."
             # Apply to runtime service

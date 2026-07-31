@@ -87,6 +87,14 @@ def is_now_within_window(schedules, fallback_start, fallback_end, now=None, clas
     )
 
 
+def is_led_output_active(administrative_window_active, config):
+    """Test mode deliberately makes the administrative LED board active."""
+    return bool(
+        administrative_window_active
+        or config.get("test_mode", False)
+    )
+
+
 def format_window_label(schedules, fallback_start, fallback_end, now=None, class_type=None):
     now = now or dt.datetime.now()
     current_weekday = now.weekday() + 1

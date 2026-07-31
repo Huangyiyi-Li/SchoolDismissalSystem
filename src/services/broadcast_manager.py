@@ -7,7 +7,7 @@ import os
 
 from .voice_text import build_dismissal_voice_text
 from .broadcast_mode import get_effective_window_signature
-from .dismissal_window import get_active_window_signature
+from .dismissal_window import get_active_window_signature, is_led_output_active
 from .log_records import DISPLAY_TIMESTAMP_FORMAT
 
 class TTSWorker(QObject):
@@ -321,8 +321,9 @@ class BroadcastManager(QObject):
         return self.get_current_window_signature(class_type=class_type) is not None
 
     def sync_led_window_state(self):
-        active = self.is_within_time_window(class_type=1) or bool(
-            self.config.get("test_mode", False)
+        active = is_led_output_active(
+            self.is_within_time_window(class_type=1),
+            self.config,
         )
         led_service = getattr(self, "led_service", None)
         if led_service:

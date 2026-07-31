@@ -76,10 +76,19 @@ class LedService:
             dismiss_due_at.isoformat() if dismiss_due_at else None,
         )
 
-    def _clear_persisted_statuses_locked(self):
-        school_id = self._school_id()
+    def _clear_persisted_statuses_locked(self, school_id=None):
+        school_id = str(school_id or self._school_id()).strip()
         if school_id:
             self.db.clear_led_class_statuses(school_id)
+
+    def _delete_persisted_status_locked(self, class_id):
+        school_id = self._school_id()
+        if school_id:
+            self.db.delete_led_class_status(
+                school_id,
+                class_id,
+                self._status_date.isoformat(),
+            )
 
     def _restore_persisted_statuses(self):
         school_id = self._school_id()
@@ -97,7 +106,14 @@ class LedService:
                 ):
                     continue
                 due_raw = row.get("dismiss_due_at")
-                if status == self.STATUS_DISMISSING and due_raw:
+                if status == self.STATUS_DISMISSING:
+                    if not due_raw:
+                        self._statuses[class_id] = self.STATUS_DISMISSED
+                        self._persist_status_locked(
+                            class_id,
+                            self.STATUS_DISMISSED,
+                        )
+                        continue
                     try:
                         due_at = datetime.datetime.fromisoformat(due_raw)
                     except (TypeError, ValueError):
@@ -111,22 +127,11 @@ class LedService:
                         )
                         continue
                     self._statuses[class_id] = status
-                    timer = self._make_timer(
-                        remaining,
-                        lambda class_id=class_id: self._complete_restored_dismissal(
-                            class_id
-                        ),
-                    )
+                    timer = self._make_status_timer(remaining, class_id)
                     self._status_timers[class_id] = timer
                     timer.start()
                 else:
                     self._statuses[class_id] = status
-
-    def _complete_restored_dismissal(self, class_id):
-        with self._lock:
-            timer = self._status_timers.get(class_id)
-        if timer is not None:
-            self._complete_dismissal(class_id, timer)
 
     def _reset_if_new_day(self):
         today = self.clock().date()
@@ -159,10 +164,7 @@ class LedService:
                 self.STATUS_DISMISSING,
                 dismiss_due_at,
             )
-            timer = self._make_timer(
-                delay,
-                lambda: self._complete_dismissal(class_id, timer),
-            )
+            timer = self._make_status_timer(delay, class_id)
             self._status_timers[class_id] = timer
             timer.start()
         if changed:
@@ -202,6 +204,8 @@ class LedService:
             return
         if status not in ("", self.STATUS_DISMISSING, self.STATUS_DISMISSED):
             raise ValueError(f"不支持的 LED 班级状态: {status}")
+        if status == self.STATUS_DISMISSING:
+            return self.mark_dismissing(class_id)
         with self._lock:
             self._reset_if_new_day()
             if self._statuses.get(class_id, "") == status:
@@ -211,14 +215,14 @@ class LedService:
                 self._persist_status_locked(class_id, status)
             else:
                 self._statuses.pop(class_id, None)
-                self._clear_persisted_statuses_locked()
+                self._delete_persisted_status_locked(class_id)
         self.refresh_async()
 
-    def reset_statuses(self):
+    def reset_statuses(self, school_id=None):
         with self._lock:
             self._cancel_all_status_timers_locked()
             self._statuses.clear()
-            self._clear_persisted_statuses_locked()
+            self._clear_persisted_statuses_locked(school_id=school_id)
             self._status_date = self.clock().date()
 
     def set_dismissal_active(self, active):
@@ -619,6 +623,15 @@ class LedService:
         timer = self._timer_factory(delay, callback)
         if hasattr(timer, "daemon"):
             timer.daemon = True
+        return timer
+
+    def _make_status_timer(self, delay, class_id):
+        timer = None
+
+        def complete():
+            self._complete_dismissal(class_id, timer)
+
+        timer = self._make_timer(delay, complete)
         return timer
 
     def shutdown(self):

@@ -51,7 +51,7 @@ except ImportError:
 import datetime
 
 from .pre_window_sync import get_next_pre_window_sync_time
-from .dismissal_window import is_now_within_window
+from .dismissal_window import is_led_output_active, is_now_within_window
 
 
 class DataSyncWorker(QObject):
@@ -88,13 +88,16 @@ class DataSyncWorker(QObject):
         self.sync_classes(clear_existing=True)
         self.sync_schedule()
         if self.led_service:
-            active = is_now_within_window(
-                self.config.get("schedules"),
-                self.config.get("time_window_start", "16:30"),
-                self.config.get("time_window_end", "18:30"),
-                now=self.clock(),
-                class_type=1,
-            ) or bool(self.config.get("test_mode", False))
+            active = is_led_output_active(
+                is_now_within_window(
+                    self.config.get("schedules"),
+                    self.config.get("time_window_start", "16:30"),
+                    self.config.get("time_window_end", "18:30"),
+                    now=self.clock(),
+                    class_type=1,
+                ),
+                self.config,
+            )
             transition_refresh = self.led_service.set_dismissal_active(active)
             if active and not transition_refresh:
                 self.led_service.refresh_async()
