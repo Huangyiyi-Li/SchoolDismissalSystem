@@ -3,7 +3,6 @@ import pyttsx3
 import datetime
 import time
 import queue
-import os
 
 from .voice_text import build_dismissal_voice_text
 from .broadcast_mode import get_effective_window_signature
@@ -91,11 +90,6 @@ class BroadcastManager(QObject):
         self.api_service = api_service
         self.led_service = led_service
         self.operation_logger = operation_logger
-        
-        # Ensure logs directory exists
-        from ..utils.path_utils import get_app_root
-        self.log_dir = os.path.join(get_app_root(), "logs")
-        os.makedirs(self.log_dir, exist_ok=True)
         
         # Deduplication state
         self.voice_history = {}
@@ -409,8 +403,6 @@ class BroadcastManager(QObject):
         
         now = datetime.datetime.now()
         timestamp = now.strftime(DISPLAY_TIMESTAMP_FORMAT)
-        now_str = now.strftime("%H:%M:%S")
-        date_str = now.strftime("%Y-%m-%d")
         
         # Emit Signal for UI
         from .class_types import format_class_type_label
@@ -441,17 +433,6 @@ class BroadcastManager(QObject):
             except Exception as exc:
                 print(f"[Log] Operation Log Write Error: {exc}")
         
-        # File Logging
-        try:
-            log_file = os.path.join(self.log_dir, f"{date_str}.txt")
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(
-                    f"[{now_str}] [Source:{source_text}] [Type:{format_class_type_label(class_type)}] "
-                    f"[Name:{class_name}] [{action}] [{reason}]\n"
-                )
-        except Exception as e:
-            print(f"[Log] File Write Error: {e}")
-
     def cleanup(self):
         self.tts_worker.stop()
         self.tts_thread.quit()

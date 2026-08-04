@@ -29,9 +29,9 @@ class OperationLogManager:
         self.max_files = max_files
         self.dedup_interval_seconds = dedup_interval_seconds
         self._lock = threading.Lock()
-        self._last_cleanup_date = None
         self._last_entry_key = None
         self._last_entry_monotonic = 0.0
+        self.last_error = ""
 
     def _default_clock(self):
         return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -66,13 +66,18 @@ class OperationLogManager:
                 < self.dedup_interval_seconds
             ):
                 return entry
-            os.makedirs(self.log_dir, exist_ok=True)
-            log_path = self._current_log_path(timestamp[:10])
-            with open(log_path, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            self._cleanup_old_files(timestamp[:10])
-            self._last_entry_key = entry_key
-            self._last_entry_monotonic = now_monotonic
+            try:
+                os.makedirs(self.log_dir, exist_ok=True)
+                log_path = self._current_log_path(timestamp[:10])
+                with open(log_path, "a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                self._cleanup_old_files()
+                self._last_entry_key = entry_key
+                self._last_entry_monotonic = now_monotonic
+                self.last_error = ""
+            except OSError as exc:
+                # Logging is auxiliary and must never prevent dismissal service startup.
+                self.last_error = str(exc)
         return entry
 
     def get_recent_entries(self, limit=500):
@@ -102,16 +107,19 @@ class OperationLogManager:
         )
         if paths and os.path.getsize(paths[-1]) < self.max_file_bytes:
             return paths[-1]
-        next_index = len(paths) + 1
+        indexes = []
+        for log_path in paths:
+            try:
+                indexes.append(int(os.path.splitext(log_path)[0].rsplit("-", 1)[1]))
+            except (IndexError, ValueError):
+                continue
+        next_index = max(indexes, default=0) + 1
         return os.path.join(
             self.log_dir,
             f"operation-{date_text}-{next_index:02d}.jsonl",
         )
 
-    def _cleanup_old_files(self, date_text):
-        if self._last_cleanup_date == date_text:
-            return
-        self._last_cleanup_date = date_text
+    def _cleanup_old_files(self):
         paths = sorted(glob.glob(os.path.join(self.log_dir, "operation-*.jsonl")))
         for old_path in paths[:-self.max_files]:
             try:

@@ -363,6 +363,7 @@ class LedService:
                 self._log_failed_result("刷新", result)
             except Exception as exc:
                 print(f"[LED] Refresh error: {exc}")
+                result = BridgeResult(False, str(exc))
 
         with self._lock:
             if self._dismissal_active:
@@ -499,10 +500,17 @@ class LedService:
                 with self._operation_lock:
                     result = self.bridge.clear(target_ip, target_port)
                 self._log_failed_result("清屏", result)
-                return result
             except Exception as exc:
                 print(f"[LED] Clear error: {exc}")
-                return BridgeResult(False, str(exc))
+                result = BridgeResult(False, str(exc))
+            self._record_operation(
+                "LED 屏",
+                "清除当前画面",
+                target=f"{target_ip}:{target_port}",
+                result="success" if result.ok else "fail",
+                detail=result.message,
+            )
+            return result
 
         return self._submitter(clear)
 

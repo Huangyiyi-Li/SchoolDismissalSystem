@@ -70,6 +70,32 @@ class OperationLogTests(unittest.TestCase):
                 ["operation-2026-08-02-01.jsonl", "operation-2026-08-03-01.jsonl"],
             )
 
+    def test_same_day_rotation_still_keeps_a_bounded_file_count(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            logger = OperationLogManager(
+                log_dir=tmpdir,
+                clock=lambda: "2026-08-04 09:00:00",
+                max_file_bytes=1,
+                max_files=2,
+                dedup_interval_seconds=0,
+            )
+
+            for index in range(5):
+                logger.record("系统", "测试", detail=str(index))
+
+            files = sorted(os.path.basename(path) for path in os.scandir(tmpdir))
+            self.assertEqual(len(files), 2)
+
+    def test_write_failure_does_not_escape_or_block_the_caller(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            logger = OperationLogManager(log_dir=tmpdir)
+
+            with patch("builtins.open", side_effect=PermissionError("denied")):
+                entry = logger.record("系统", "软件启动")
+
+            self.assertEqual(entry["action"], "软件启动")
+            self.assertIn("denied", logger.last_error)
+
 
 if __name__ == "__main__":
     unittest.main()

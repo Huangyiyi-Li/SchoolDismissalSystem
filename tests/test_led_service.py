@@ -85,6 +85,15 @@ class FakeTimerFactory:
         return timer
 
 
+class FakeOperationLogger:
+    def __init__(self):
+        self.entries = []
+
+    def record(self, **entry):
+        self.entries.append(entry)
+        return entry
+
+
 class LedServiceTests(unittest.TestCase):
     def make_db(self, tmpdir):
         db = DatabaseManager(os.path.join(tmpdir, "school.db"))
@@ -850,6 +859,33 @@ class LedServiceTests(unittest.TestCase):
             current[0] += datetime.timedelta(seconds=10)
             service.set_dismissal_active(True)
             self.assertEqual(len(bridge.displays), 2)
+
+    def test_refresh_exception_is_available_in_local_operation_log(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            class ExplodingBridge(FakeBridge):
+                def display(self, ip, port, pages, stay_seconds):
+                    raise RuntimeError("bridge process failed")
+
+            operation_logger = FakeOperationLogger()
+            service = LedService(
+                FakeConfig({"school_id": "40125"}),
+                self.make_db(tmpdir),
+                bridge=ExplodingBridge(),
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+                dismissal_active=False,
+                operation_logger=operation_logger,
+            )
+
+            service.set_dismissal_active(True)
+
+            failure = next(
+                entry
+                for entry in operation_logger.entries
+                if entry["action"] == "刷新放学节目"
+            )
+            self.assertEqual(failure["result"], "fail")
+            self.assertIn("bridge process failed", failure["detail"])
 
     def test_rotation_continues_after_transient_send_failure(self):
         with tempfile.TemporaryDirectory() as tmpdir:

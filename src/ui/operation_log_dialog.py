@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 
+from PyQt6.QtCore import QTimer
+
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -26,6 +28,10 @@ class OperationLogDialog(QDialog):
         self.operation_logger = operation_logger or default_operation_logger
         self.entries = []
         self.filtered_entries = []
+        self.filter_timer = QTimer(self)
+        self.filter_timer.setSingleShot(True)
+        self.filter_timer.setInterval(250)
+        self.filter_timer.timeout.connect(self.apply_filters)
         self.setWindowTitle("本地日志")
         self.resize(980, 620)
         self.setup_ui()
@@ -53,7 +59,7 @@ class OperationLogDialog(QDialog):
         filter_layout.addWidget(self.result_filter)
         self.keyword_filter = QLineEdit()
         self.keyword_filter.setPlaceholderText("按来源、操作、班级、LED 地址或错误搜索")
-        self.keyword_filter.textChanged.connect(self.apply_filters)
+        self.keyword_filter.textChanged.connect(self.schedule_filter)
         filter_layout.addWidget(QLabel("关键词"))
         filter_layout.addWidget(self.keyword_filter, stretch=1)
         layout.addLayout(filter_layout)
@@ -81,6 +87,9 @@ class OperationLogDialog(QDialog):
     def load_entries(self):
         self.entries = self.operation_logger.get_recent_entries(limit=500)
         self.apply_filters()
+
+    def schedule_filter(self, *_args):
+        self.filter_timer.start()
 
     def apply_filters(self):
         result = self.result_filter.currentText()
