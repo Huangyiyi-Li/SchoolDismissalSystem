@@ -186,7 +186,9 @@ class MainWindow(QMainWindow):
         self.test_mode_check.stateChanged.connect(self.toggle_test_mode)
         self.simulate_swipe_button = QPushButton("模拟刷卡")
         self.simulate_swipe_button.setEnabled(self.test_mode_check.isChecked())
-        self.simulate_swipe_button.setToolTip("测试模式下选择一个行政班，模拟刷卡、语音和 LED 状态变化")
+        self.simulate_swipe_button.setToolTip(
+            "测试模式下选择一个行政班或社团班，模拟刷卡、语音和 LED 状态变化"
+        )
         self.simulate_swipe_button.clicked.connect(self.simulate_class_swipe)
         
         status_layout.addWidget(self.window_label)
@@ -319,12 +321,12 @@ class MainWindow(QMainWindow):
             return
 
         school_id = self.config.get("school_id")
-        classes = self.db.get_led_classes(school_id)
+        classes = self.db.get_led_classes(school_id, class_type=None)
         if not classes:
             QMessageBox.warning(
                 self,
                 "模拟刷卡",
-                "暂无可测试的行政班，请先绑定学校并同步数据。",
+                "暂无可测试的行政班或社团班，请先绑定学校并同步数据。",
             )
             return
 
@@ -332,7 +334,9 @@ class MainWindow(QMainWindow):
         for item in classes:
             class_name = item.get("class_show_name") or item.get("class_name") or "未命名班级"
             grade_name = item.get("grade_name") or ""
-            labels.append(f"{grade_name} - {class_name}" if grade_name else class_name)
+            class_type_label = format_class_type_label(item.get("class_type"))
+            name_text = f"{grade_name} - {class_name}" if grade_name else class_name
+            labels.append(f"[{class_type_label}] {name_text}")
 
         selected, accepted = QInputDialog.getItem(
             self,
@@ -347,7 +351,8 @@ class MainWindow(QMainWindow):
 
         selected_class = classes[labels.index(selected)]
         result = self.broadcast_manager.simulate_class_swipe(
-            selected_class.get("class_id")
+            selected_class.get("class_id"),
+            class_type=selected_class.get("class_type", 1),
         )
         if result.get("result") == "success":
             QMessageBox.information(self, "模拟刷卡", result.get("message", "模拟成功"))
@@ -438,7 +443,8 @@ class MainWindow(QMainWindow):
         self.window_label.setText(format_schedule_status_html(window_text))
 
         # Update Status
-        administrative_active = self.broadcast_manager.sync_led_window_state()
+        self.broadcast_manager.sync_led_window_state()
+        administrative_active = self.broadcast_manager.is_within_time_window(class_type=1)
         club_active = self.broadcast_manager.is_within_time_window(class_type=2)
         if self.config.get("test_mode", False):
              self.status_label.setText("当前状态: [测试模式] 任意时间仅播报，不推送")

@@ -24,9 +24,6 @@ import onbon.bx06.utils.DisplayStyleFactory.DisplayStyle;
  *   clear   --ip 192.168.100.1 --port 5005
  */
 public final class OnbonLedBridge {
-    private static final int SCREEN_WIDTH = 1024;
-    private static final int SCREEN_HEIGHT = 96;
-
     private OnbonLedBridge() {
     }
 
@@ -77,8 +74,8 @@ public final class OnbonLedBridge {
         DynamicBxArea area = new DynamicBxArea(
             0,
             0,
-            SCREEN_WIDTH,
-            SCREEN_HEIGHT,
+            options.width,
+            options.height,
             screen.getProfile()
         );
         for (String imagePath : options.images) {
@@ -126,6 +123,8 @@ public final class OnbonLedBridge {
         private String command;
         private String ip;
         private int port = 5005;
+        private int width = 1024;
+        private int height = 96;
         private int stay = 500;
         private final List<String> images = new ArrayList<String>();
 
@@ -143,6 +142,10 @@ public final class OnbonLedBridge {
                     parsed.port = Integer.parseInt(requireValue(args, ++index, "--port"));
                 } else if ("--stay".equals(value)) {
                     parsed.stay = Integer.parseInt(requireValue(args, ++index, "--stay"));
+                } else if ("--width".equals(value)) {
+                    parsed.width = Integer.parseInt(requireValue(args, ++index, "--width"));
+                } else if ("--height".equals(value)) {
+                    parsed.height = Integer.parseInt(requireValue(args, ++index, "--height"));
                 } else if ("--images".equals(value)) {
                     for (index = index + 1; index < args.length; index++) {
                         parsed.images.add(args[index]);
@@ -157,6 +160,9 @@ public final class OnbonLedBridge {
             }
             if (parsed.port < 1 || parsed.port > 65535) {
                 throw new IllegalArgumentException("端口超出范围");
+            }
+            if (parsed.width < 1 || parsed.height < 1) {
+                throw new IllegalArgumentException("LED 像素尺寸必须大于 0");
             }
             if ("display".equals(parsed.command) && parsed.images.isEmpty()) {
                 throw new IllegalArgumentException("缺少 --images");

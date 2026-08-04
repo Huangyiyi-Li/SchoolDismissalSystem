@@ -72,8 +72,8 @@ class OrderingLedService:
     def __init__(self, events):
         self.events = events
 
-    def set_dismissal_active(self, active):
-        self.events.append(("led-state", active))
+    def set_dismissal_active(self, active, class_types=None):
+        self.events.append(("led-state", active, set(class_types or [])))
 
     def refresh_async(self):
         self.events.append("led-refresh")
@@ -217,7 +217,7 @@ class DataSyncV2Tests(unittest.TestCase):
                 [
                     "classes",
                     "schedule",
-                    ("led-state", True),
+                    ("led-state", True, {1}),
                     "led-refresh",
                 ],
             )

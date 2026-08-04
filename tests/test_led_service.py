@@ -7,6 +7,8 @@ import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 from src.database import DatabaseManager
 from src.services.led_bridge_client import BridgeResult
 from src.services.led_renderer import render_led_pages as real_render_led_pages
@@ -33,6 +35,7 @@ class FakeConfig:
 class FakeBridge:
     def __init__(self):
         self.displays = []
+        self.display_dimensions = []
         self.clears = []
         self.operations = []
         self.display_results = []
@@ -41,8 +44,9 @@ class FakeBridge:
     def ping(self, ip, port):
         return BridgeResult(True, f"{ip}:{port}")
 
-    def display(self, ip, port, pages, stay_seconds):
+    def display(self, ip, port, pages, stay_seconds, width=1024, height=96):
         self.displays.append((ip, port, list(pages), stay_seconds))
+        self.display_dimensions.append((width, height))
         self.operations.append(("display", ip, port))
         if self.display_results:
             return self.display_results.pop(0)
@@ -354,6 +358,54 @@ class LedServiceTests(unittest.TestCase):
             self.assertEqual(len(bridge.displays), 1)
             self.assertEqual(len(list((Path(tmpdir) / "pages").glob("led-page-*.bmp"))), 1)
 
+    def test_custom_dimensions_are_used_for_rendering_and_bridge_area(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge = FakeBridge()
+            service = LedService(
+                FakeConfig(
+                    {
+                        "school_id": "40125",
+                        "led_width": 640,
+                        "led_height": 80,
+                        "led_layout_regions": 2,
+                    }
+                ),
+                self.make_db(tmpdir),
+                bridge=bridge,
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+
+            result = service.refresh()
+
+            self.assertTrue(result.ok)
+            self.assertEqual(bridge.display_dimensions, [(640, 80)])
+            with Image.open(bridge.displays[0][2][0]) as image:
+                self.assertEqual(image.size, (640, 80))
+
+    def test_active_club_window_adds_club_pages(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            db.upsert_led_class(
+                "40125", 2, "201", "", "足球社团", class_show_name="足球社团"
+            )
+            bridge = FakeBridge()
+            service = LedService(
+                FakeConfig({"school_id": "40125"}),
+                db,
+                bridge=bridge,
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+            service.set_dismissal_active(True, class_types={1, 2})
+
+            result = service.refresh()
+
+            self.assertTrue(result.ok)
+            page_names = {path.name for path in service._display_pages}
+            self.assertIn("led-page-01.bmp", page_names)
+            self.assertIn("led-club-page-01.bmp", page_names)
+
     def test_dismissed_status_survives_service_restart_on_same_day(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = self.make_db(tmpdir)
@@ -641,7 +693,7 @@ class LedServiceTests(unittest.TestCase):
             self.assertTrue(timers.timers[0].cancelled)
             self.assertEqual(bridge.clears, [("192.168.100.1", 5005)])
 
-    def test_test_screen_clears_real_class_status_and_countdown(self):
+    def test_test_screen_preserves_real_class_status_and_countdown(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             timers = FakeTimerFactory()
             service = LedService(
@@ -657,8 +709,105 @@ class LedServiceTests(unittest.TestCase):
 
             service.send_test_screen()
 
-            self.assertEqual(service.get_status("101"), "")
-            self.assertTrue(status_timer.cancelled)
+            self.assertEqual(service.get_status("101"), "放学中")
+            self.assertFalse(status_timer.cancelled)
+
+    def test_test_mode_uses_empty_isolated_statuses_and_restores_formal_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = LedService(
+                FakeConfig({"school_id": "40125"}),
+                self.make_db(tmpdir),
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+            service.mark_dismissed("101", class_type=1)
+
+            service.set_test_mode(True)
+
+            self.assertEqual(service.get_status("101", class_type=1), "")
+            service.mark_dismissing("101", class_type=1)
+            self.assertEqual(service.get_status("101", class_type=1), "放学中")
+            self.assertEqual(
+                service.get_status("101", class_type=1, test_mode=False),
+                "已放学",
+            )
+
+            service.set_test_mode(False)
+
+            self.assertEqual(service.get_status("101", class_type=1), "已放学")
+
+    def test_formal_countdown_can_finish_while_test_mode_is_open(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            timers = FakeTimerFactory()
+            service = LedService(
+                FakeConfig({"school_id": "40125"}),
+                self.make_db(tmpdir),
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+                timer_factory=timers,
+            )
+            service.mark_dismissing("101", class_type=1)
+            formal_timer = timers.timers[0]
+
+            service.set_test_mode(True)
+            formal_timer.fire()
+
+            self.assertEqual(service.get_status("101", class_type=1), "")
+            self.assertEqual(
+                service.get_status("101", class_type=1, test_mode=False),
+                "已放学",
+            )
+            service.set_test_mode(False)
+            self.assertEqual(service.get_status("101", class_type=1), "已放学")
+
+    def test_club_status_is_independent_from_administrative_class_with_same_id(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = LedService(
+                FakeConfig({"school_id": "40125"}),
+                self.make_db(tmpdir),
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+            service.set_dismissal_active(True, class_types={1, 2})
+            service.mark_dismissed("101", class_type=1)
+            service.mark_dismissing("101", class_type=2)
+
+            self.assertEqual(service.get_status("101", class_type=1), "已放学")
+            self.assertEqual(service.get_status("101", class_type=2), "放学中")
+
+    def test_ending_one_class_type_clears_only_that_types_statuses(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            timers = FakeTimerFactory()
+            db = self.make_db(tmpdir)
+            service = LedService(
+                FakeConfig({"school_id": "40125"}),
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+                timer_factory=timers,
+            )
+            service.set_dismissal_active(True, class_types={1, 2})
+            service.mark_dismissed("101", class_type=1)
+            service.mark_dismissing("201", class_type=2)
+            club_timer = timers.timers[-1]
+
+            service.set_dismissal_active(True, class_types={1})
+
+            self.assertEqual(service.get_status("101", class_type=1), "已放学")
+            self.assertEqual(service.get_status("201", class_type=2), "")
+            self.assertTrue(club_timer.cancelled)
+            self.assertEqual(
+                db.get_led_class_statuses(
+                    "40125",
+                    service._status_date.isoformat(),
+                    class_type=2,
+                ),
+                [],
+            )
 
     def test_page_files_are_not_rewritten_while_bridge_is_reading_them(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -682,7 +831,7 @@ class LedServiceTests(unittest.TestCase):
                     self.entered = threading.Event()
                     self.release = threading.Event()
 
-                def display(self, ip, port, pages, stay_seconds):
+                def display(self, ip, port, pages, stay_seconds, width=1024, height=96):
                     self.call_count += 1
                     if self.call_count == 2:
                         self.in_display = True
@@ -863,7 +1012,7 @@ class LedServiceTests(unittest.TestCase):
     def test_refresh_exception_is_available_in_local_operation_log(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             class ExplodingBridge(FakeBridge):
-                def display(self, ip, port, pages, stay_seconds):
+                def display(self, ip, port, pages, stay_seconds, width=1024, height=96):
                     raise RuntimeError("bridge process failed")
 
             operation_logger = FakeOperationLogger()

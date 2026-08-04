@@ -88,17 +88,30 @@ class DataSyncWorker(QObject):
         self.sync_classes(clear_existing=True)
         self.sync_schedule()
         if self.led_service:
-            active = is_led_output_active(
-                is_now_within_window(
+            active_types = {
+                class_type
+                for class_type in (1, 2)
+                if is_now_within_window(
                     self.config.get("schedules"),
                     self.config.get("time_window_start", "16:30"),
                     self.config.get("time_window_end", "18:30"),
                     now=self.clock(),
-                    class_type=1,
-                ),
-                self.config,
-            )
-            transition_refresh = self.led_service.set_dismissal_active(active)
+                    class_type=class_type,
+                )
+            }
+            test_mode = bool(self.config.get("test_mode", False))
+            if test_mode:
+                active_types = {1, 2}
+            active = is_led_output_active(bool(active_types), self.config)
+            if hasattr(self.led_service, "set_test_mode"):
+                self.led_service.set_test_mode(test_mode)
+            try:
+                transition_refresh = self.led_service.set_dismissal_active(
+                    active,
+                    class_types=active_types,
+                )
+            except TypeError:
+                transition_refresh = self.led_service.set_dismissal_active(active)
             if active and not transition_refresh:
                 self.led_service.refresh_async()
         print("[Sync] Data sync completed.")
@@ -130,7 +143,7 @@ class DataSyncWorker(QObject):
             # classes actually returned by the service and deduplicate classId.
             catalog_key = (str(normalized_class_type), str(class_id))
             if (
-                normalized_class_type == 1
+                normalized_class_type in (1, 2)
                 and class_id
                 and class_name
                 and catalog_key not in saved_class_ids

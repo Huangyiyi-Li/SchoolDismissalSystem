@@ -14,6 +14,7 @@ def make_class(class_id, grade_name, source_order):
         "class_name": f"{grade_name}{source_order + 1}班",
         "class_show_name": f"{source_order + 1}班",
         "source_order": source_order,
+        "class_type": 1,
     }
 
 
@@ -51,6 +52,87 @@ class LedRendererTests(unittest.TestCase):
                 with Image.open(page) as image:
                     self.assertEqual(image.size, (1024, 96))
                     self.assertEqual(image.mode, "1")
+
+    def test_three_horizontal_regions_place_six_grades_on_one_page(self):
+        classes = [make_class(str(index), f"{index}年级", index) for index in range(1, 7)]
+
+        layout = build_led_page_layout(
+            classes,
+            grades_per_page=2,
+            regions_per_page=3,
+        )
+
+        self.assertEqual(len(layout.pages), 1)
+        self.assertEqual(
+            [[row.grade_name for row in region] for region in layout.pages[0].regions],
+            [["1年级", "2年级"], ["3年级", "4年级"], ["5年级", "6年级"]],
+        )
+
+    def test_club_classes_render_as_named_rows_with_status_column(self):
+        clubs = [
+            {
+                "class_id": "201",
+                "class_type": 2,
+                "class_name": "足球社团",
+                "class_show_name": "足球社团",
+                "source_order": 0,
+            },
+            {
+                "class_id": "202",
+                "class_type": 2,
+                "class_name": "合唱社团",
+                "class_show_name": "合唱社团",
+                "source_order": 1,
+            },
+        ]
+
+        layout = build_led_page_layout(
+            clubs,
+            grades_per_page=2,
+            regions_per_page=1,
+            class_type=2,
+        )
+
+        self.assertEqual(
+            [row.grade_name for row in layout.pages[0].rows],
+            ["足球社团", "合唱社团"],
+        )
+
+    def test_title_can_be_disabled_and_custom_pixel_size_is_used(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pages = render_led_pages(
+                "",
+                [make_class("101", "一年级", 0)],
+                {"101": "放学中"},
+                Path(tmpdir),
+                width=640,
+                height=80,
+                show_title=False,
+            )
+
+            with Image.open(pages[0]) as image:
+                self.assertEqual(image.size, (640, 80))
+
+    def test_narrow_screen_keeps_layout_coordinates_valid(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pages = render_led_pages(
+                "学校\n放学系统",
+                [
+                    make_class("101", "一年级", 0),
+                    make_class("201", "二年级", 1),
+                ],
+                {},
+                Path(tmpdir),
+                width=96,
+                height=32,
+                grades_per_page=1,
+                regions_per_page=2,
+                show_title=True,
+            )
+
+            self.assertEqual(len(pages), 1)
+            with Image.open(pages[0]) as image:
+                self.assertEqual(image.size, (96, 32))
 
 
 if __name__ == "__main__":

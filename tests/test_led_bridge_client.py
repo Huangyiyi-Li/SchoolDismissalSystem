@@ -35,10 +35,20 @@ class LedBridgeClientTests(unittest.TestCase):
             bridge = JavaLedBridge(Path(tmpdir), runner=runner)
             pages = [Path(tmpdir) / "page-1.bmp", Path(tmpdir) / "page-2.bmp"]
 
-            result = bridge.display("10.0.0.8", 5005, pages, stay_seconds=7)
+            result = bridge.display(
+                "10.0.0.8",
+                5005,
+                pages,
+                stay_seconds=7,
+                width=640,
+                height=80,
+            )
 
         self.assertTrue(result.ok)
         self.assertIn("700", calls[0])
+        self.assertIn("640", calls[0])
+        self.assertIn("80", calls[0])
+        self.assertLess(calls[0].index("--width"), calls[0].index("--images"))
         self.assertEqual(calls[0][-2:], [str(page.resolve()) for page in pages])
 
     def test_nonzero_bridge_exit_is_returned_as_failure(self):

@@ -305,14 +305,15 @@ class BroadcastManager(QObject):
 
         return {"result": "success"}
 
-    def simulate_class_swipe(self, class_id):
+    def simulate_class_swipe(self, class_id, class_type=1):
         """Simulate an administrative-class swipe without contacting the server."""
         if not self.config.get("test_mode", False):
             return {"result": "fail", "message": "请先开启测试模式"}
 
         class_id = str(class_id or "").strip()
+        class_type = int(class_type or 1)
         school_id = self.config.get("school_id")
-        classes = self.db.get_led_classes(school_id)
+        classes = self.db.get_led_classes(school_id, class_type=class_type)
         class_info = next(
             (
                 item
@@ -322,9 +323,10 @@ class BroadcastManager(QObject):
             None,
         )
         if class_info is None:
+            class_type_label = "社团班" if class_type == 2 else "行政班"
             return {
                 "result": "fail",
-                "message": "未找到该行政班，请先同步学校数据",
+                "message": f"未找到该{class_type_label}，请先同步学校数据",
             }
 
         class_name = (
@@ -341,13 +343,13 @@ class BroadcastManager(QObject):
         # Test mode also owns the LED outside the configured dismissal window.
         self.sync_led_window_state()
         self.tts_worker.add_text(build_dismissal_voice_text(class_name))
-        self._mark_led_dismissing(class_id, 1)
+        self._mark_led_dismissing(class_id, class_type)
         self._log_event(
             "",
             class_name,
             "语音播报",
             "测试模式/本地模拟，不推送服务端",
-            class_type=1,
+            class_type=class_type,
             source="模拟刷卡",
             source_detail=f"classId={class_id}",
         )
@@ -356,13 +358,16 @@ class BroadcastManager(QObject):
     def _mark_led_dismissing(self, class_id, class_type=None):
         led_service = getattr(self, "led_service", None)
         try:
-            is_administrative_class = int(class_type) == 1
+            normalized_class_type = int(class_type)
         except (TypeError, ValueError):
-            is_administrative_class = False
-        if not led_service or not class_id or not is_administrative_class:
+            normalized_class_type = 0
+        if not led_service or not class_id or normalized_class_type not in (1, 2):
             return
         try:
-            led_service.mark_dismissing(str(class_id))
+            led_service.mark_dismissing(
+                str(class_id),
+                class_type=normalized_class_type,
+            )
         except Exception as exc:
             # LED is an auxiliary output. Never block voice or server reporting.
             print(f"[LED] Failed to queue class update: {exc}")
@@ -371,13 +376,23 @@ class BroadcastManager(QObject):
         return self.get_current_window_signature(class_type=class_type) is not None
 
     def sync_led_window_state(self):
-        active = is_led_output_active(
-            self.is_within_time_window(class_type=1),
-            self.config,
-        )
+        test_mode = bool(self.config.get("test_mode", False))
+        active_types = {
+            class_type
+            for class_type in (1, 2)
+            if self.is_within_time_window(class_type=class_type)
+        }
+        if test_mode:
+            active_types = {1, 2}
+        active = is_led_output_active(bool(active_types), self.config)
         led_service = getattr(self, "led_service", None)
         if led_service:
-            led_service.set_dismissal_active(active)
+            if hasattr(led_service, "set_test_mode"):
+                led_service.set_test_mode(test_mode)
+            try:
+                led_service.set_dismissal_active(active, class_types=active_types)
+            except TypeError:
+                led_service.set_dismissal_active(active)
         return active
 
     def _log_event(

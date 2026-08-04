@@ -27,9 +27,9 @@ class FakeDb:
     def get_class_info_by_card(self, card_id):
         return self.class_info
 
-    def get_led_classes(self, school_id=None):
+    def get_led_classes(self, school_id=None, class_type=1):
         class_name, class_id, stored_school_id, class_type, show_name, voice_name = self.class_info
-        if not class_name or int(class_type or 0) != 1:
+        if not class_name or int(class_type or 0) not in (1, 2):
             return []
         return [
             {
@@ -77,12 +77,16 @@ class FakeLedService:
     def __init__(self):
         self.updates = []
         self.window_states = []
+        self.test_modes = []
 
-    def mark_dismissing(self, class_id):
-        self.updates.append(class_id)
+    def mark_dismissing(self, class_id, class_type=1):
+        self.updates.append((int(class_type), class_id))
 
     def set_dismissal_active(self, active):
         self.window_states.append(active)
+
+    def set_test_mode(self, enabled):
+        self.test_modes.append(bool(enabled))
 
 
 class ImmediateThread:
@@ -187,7 +191,7 @@ class ManualDismissalTests(unittest.TestCase):
                 )
             ],
         )
-        self.assertEqual(manager.led_service.updates, ["123"])
+        self.assertEqual(manager.led_service.updates, [(1, "123")])
 
     def test_led_failure_does_not_block_manual_voice_or_result(self):
         manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
@@ -202,13 +206,13 @@ class ManualDismissalTests(unittest.TestCase):
         self.assertEqual(result, {"result": "success"})
         self.assertEqual(manager.tts_worker.texts, ["一年级一班正在放学"])
 
-    def test_club_command_does_not_push_administrative_class_led(self):
+    def test_club_command_updates_club_led_status(self):
         manager = self.make_manager(("足球社团", "201", "40125", 2, "足球社团", "足球社团"))
 
         result = manager.process_manual_dismissal({"classType": 2, "classId": "201"})
 
         self.assertEqual(result, {"result": "success"})
-        self.assertEqual(manager.led_service.updates, [])
+        self.assertEqual(manager.led_service.updates, [(2, "201")])
 
     def test_missing_payload_class_type_uses_local_administrative_type_for_led(self):
         manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
@@ -216,7 +220,7 @@ class ManualDismissalTests(unittest.TestCase):
         result = manager.process_manual_dismissal({"classId": "123"})
 
         self.assertEqual(result, {"result": "success"})
-        self.assertEqual(manager.led_service.updates, ["123"])
+        self.assertEqual(manager.led_service.updates, [(1, "123")])
 
     def test_valid_administrative_class_swipe_updates_led(self):
         manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
@@ -226,7 +230,7 @@ class ManualDismissalTests(unittest.TestCase):
 
         manager.process_swipe("CARD-1", "192.168.1.20")
 
-        self.assertEqual(manager.led_service.updates, ["123"])
+        self.assertEqual(manager.led_service.updates, [(1, "123")])
         self.assertEqual(manager.tts_worker.texts, ["一年级一班正在放学"])
 
     def test_test_mode_activates_led_when_administrative_window_is_inactive(self):
@@ -238,6 +242,7 @@ class ManualDismissalTests(unittest.TestCase):
 
         self.assertTrue(active)
         self.assertEqual(manager.led_service.window_states, [True])
+        self.assertEqual(manager.led_service.test_modes, [True])
 
     def test_normal_mode_restores_led_when_administrative_window_is_inactive(self):
         manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
@@ -259,7 +264,7 @@ class ManualDismissalTests(unittest.TestCase):
         self.assertEqual(result, {"result": "success", "message": "已模拟一年级一班刷卡"})
         self.assertEqual(manager.tts_worker.texts, ["一年级一班正在放学"])
         self.assertEqual(manager.led_service.window_states, [True])
-        self.assertEqual(manager.led_service.updates, ["123"])
+        self.assertEqual(manager.led_service.updates, [(1, "123")])
         self.assertEqual(manager.logged_events[0]["source"], "模拟刷卡")
         self.assertEqual(manager.logged_events[0]["source_detail"], "classId=123")
 
@@ -281,6 +286,20 @@ class ManualDismissalTests(unittest.TestCase):
 
         self.assertEqual(result, {"result": "fail", "message": "未找到该行政班，请先同步学校数据"})
         self.assertEqual(manager.tts_worker.texts, [])
+
+    def test_simulated_club_swipe_triggers_club_voice_and_led_status(self):
+        manager = self.make_manager(
+            ("足球社团", "201", "40125", 2, "足球社团", "足球社团")
+        )
+        manager.config = FakeConfig({"test_mode": True, "school_id": "40125"})
+        manager.get_current_window_signature = lambda class_type=None: None
+
+        result = manager.simulate_class_swipe("201", class_type=2)
+
+        self.assertEqual(result["result"], "success")
+        self.assertEqual(manager.tts_worker.texts, ["足球社团正在放学"])
+        self.assertEqual(manager.led_service.updates, [(2, "201")])
+        self.assertEqual(manager.logged_events[0]["class_type"], 2)
 
 
 if __name__ == "__main__":

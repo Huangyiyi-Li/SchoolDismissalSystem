@@ -89,14 +89,45 @@ class DatabaseManager:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS led_class_statuses (
                 school_id TEXT NOT NULL,
+                class_type INTEGER NOT NULL DEFAULT 1,
                 class_id TEXT NOT NULL,
                 status_date TEXT NOT NULL,
                 status TEXT NOT NULL,
                 dismiss_due_at TEXT,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (school_id, class_id, status_date)
+                PRIMARY KEY (school_id, class_type, class_id, status_date)
             )
         ''')
+        cursor.execute("PRAGMA table_info(led_class_statuses)")
+        status_columns = cursor.fetchall()
+        status_column_names = [item[1] for item in status_columns]
+        status_pk_columns = [
+            item[1] for item in sorted(status_columns, key=lambda item: item[5]) if item[5]
+        ]
+        expected_status_pk = ["school_id", "class_type", "class_id", "status_date"]
+        if "class_type" not in status_column_names or status_pk_columns != expected_status_pk:
+            cursor.execute("ALTER TABLE led_class_statuses RENAME TO led_class_statuses_legacy")
+            cursor.execute('''
+                CREATE TABLE led_class_statuses (
+                    school_id TEXT NOT NULL,
+                    class_type INTEGER NOT NULL DEFAULT 1,
+                    class_id TEXT NOT NULL,
+                    status_date TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    dismiss_due_at TEXT,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (school_id, class_type, class_id, status_date)
+                )
+            ''')
+            cursor.execute('''
+                INSERT OR REPLACE INTO led_class_statuses
+                    (school_id, class_type, class_id, status_date, status,
+                     dismiss_due_at, updated_at)
+                SELECT school_id, 1, class_id, status_date, status,
+                       dismiss_due_at, updated_at
+                FROM led_class_statuses_legacy
+            ''')
+            cursor.execute("DROP TABLE led_class_statuses_legacy")
 
         # Devices table
         cursor.execute('''
@@ -322,32 +353,30 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_led_classes(self, school_id=None):
-        """Return actual server-provided administrative classes, once per classId."""
+    def get_led_classes(self, school_id=None, class_type=1):
+        """Return actual server-provided classes, optionally filtered by type."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+        conditions = []
+        params = []
         if school_id:
-            cursor.execute(
-                """
-                SELECT school_id, class_type, class_id, grade_name, class_name,
-                       class_show_name, class_voice_name, source_order
-                FROM led_classes
-                WHERE school_id = ? AND class_type = 1
-                ORDER BY source_order, class_id
-                """,
-                (str(school_id),),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT school_id, class_type, class_id, grade_name, class_name,
-                       class_show_name, class_voice_name, source_order
-                FROM led_classes
-                WHERE class_type = 1
-                ORDER BY source_order, class_id
-                """
-            )
+            conditions.append("school_id = ?")
+            params.append(str(school_id))
+        if class_type is not None:
+            conditions.append("class_type = ?")
+            params.append(int(class_type))
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        cursor.execute(
+            f"""
+            SELECT school_id, class_type, class_id, grade_name, class_name,
+                   class_show_name, class_voice_name, source_order
+            FROM led_classes
+            {where_clause}
+            ORDER BY class_type, source_order, class_id
+            """,
+            tuple(params),
+        )
         rows = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return rows
@@ -359,6 +388,7 @@ class DatabaseManager:
         status_date,
         status,
         dismiss_due_at=None,
+        class_type=1,
     ):
         if not school_id or not class_id or not status_date or not status:
             return False
@@ -368,11 +398,13 @@ class DatabaseManager:
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO led_class_statuses
-                    (school_id, class_id, status_date, status, dismiss_due_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    (school_id, class_type, class_id, status_date, status,
+                     dismiss_due_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 (
                     str(school_id),
+                    int(class_type or 1),
                     str(class_id),
                     str(status_date),
                     str(status),
@@ -384,47 +416,57 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_led_class_statuses(self, school_id, status_date):
+    def get_led_class_statuses(self, school_id, status_date, class_type=None):
         if not school_id or not status_date:
             return []
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT class_id, status, dismiss_due_at
-            FROM led_class_statuses
-            WHERE school_id = ? AND status_date = ?
-            ORDER BY updated_at, class_id
-            """,
-            (str(school_id), str(status_date)),
-        )
-        rows = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        return rows
-
-    def clear_led_class_statuses(self, school_id, status_date=None):
-        if not school_id:
-            return
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        if status_date is None:
+        if class_type is None:
             cursor.execute(
-                "DELETE FROM led_class_statuses WHERE school_id = ?",
-                (str(school_id),),
+                """
+                SELECT class_type, class_id, status, dismiss_due_at
+                FROM led_class_statuses
+                WHERE school_id = ? AND status_date = ?
+                ORDER BY updated_at, class_type, class_id
+                """,
+                (str(school_id), str(status_date)),
             )
         else:
             cursor.execute(
                 """
-                DELETE FROM led_class_statuses
-                WHERE school_id = ? AND status_date = ?
+                SELECT class_type, class_id, status, dismiss_due_at
+                FROM led_class_statuses
+                WHERE school_id = ? AND status_date = ? AND class_type = ?
+                ORDER BY updated_at, class_id
                 """,
-                (str(school_id), str(status_date)),
+                (str(school_id), str(status_date), int(class_type)),
             )
+        rows = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
+
+    def clear_led_class_statuses(self, school_id, status_date=None, class_type=None):
+        if not school_id:
+            return
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        conditions = ["school_id = ?"]
+        params = [str(school_id)]
+        if status_date is not None:
+            conditions.append("status_date = ?")
+            params.append(str(status_date))
+        if class_type is not None:
+            conditions.append("class_type = ?")
+            params.append(int(class_type))
+        cursor.execute(
+            "DELETE FROM led_class_statuses WHERE " + " AND ".join(conditions),
+            tuple(params),
+        )
         conn.commit()
         conn.close()
 
-    def delete_led_class_status(self, school_id, class_id, status_date):
+    def delete_led_class_status(self, school_id, class_id, status_date, class_type=1):
         if not school_id or not class_id or not status_date:
             return
         conn = sqlite3.connect(self.db_path)
@@ -432,9 +474,9 @@ class DatabaseManager:
         cursor.execute(
             """
             DELETE FROM led_class_statuses
-            WHERE school_id = ? AND class_id = ? AND status_date = ?
+            WHERE school_id = ? AND class_type = ? AND class_id = ? AND status_date = ?
             """,
-            (str(school_id), str(class_id), str(status_date)),
+            (str(school_id), int(class_type or 1), str(class_id), str(status_date)),
         )
         conn.commit()
         conn.close()

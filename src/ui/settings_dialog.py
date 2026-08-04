@@ -1,11 +1,15 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QMessageBox, QFormLayout,
-                             QCheckBox, QPlainTextEdit, QGroupBox)
-from PyQt6.QtCore import Qt, pyqtSignal
+                             QCheckBox, QPlainTextEdit, QGroupBox, QWidget,
+                             QScrollArea, QFrame)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from ..services.device_identity import format_device_no_from_node, normalize_device_no
+from ..utils.path_utils import get_app_root
 import ipaddress
 import threading
 import uuid
+from pathlib import Path
 
 class SettingsDialog(QDialog):
     led_action_finished = pyqtSignal(bool, str)
@@ -24,12 +28,20 @@ class SettingsDialog(QDialog):
         self._led_action_running = False
         self._closing = False
         self.setWindowTitle("绑定学校")
-        self.resize(520, 460)
+        self.resize(1120, 720)
+        self._preview_pages = []
+        self._preview_index = 0
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(250)
+        self._preview_timer.timeout.connect(self.refresh_led_preview)
         self.led_action_finished.connect(self._show_led_result)
         self.setup_ui()
 
     def setup_ui(self):
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
 
         form_layout = QFormLayout()
         
@@ -66,7 +78,7 @@ class SettingsDialog(QDialog):
         # Removed manual time settings as per requirement
         # Time is now managed via Server Schedule
 
-        layout.addLayout(form_layout)
+        left_layout.addLayout(form_layout)
 
         led_group = QGroupBox("LED 屏（仰邦 BX-6E1XP）")
         led_form = QFormLayout(led_group)
@@ -85,6 +97,20 @@ class SettingsDialog(QDialog):
         )
         led_form.addRow("控制卡端口:", self.led_port_edit)
 
+        size_layout = QHBoxLayout()
+        self.led_width_edit = QLineEdit(str(self.config.get("led_width", 1024)))
+        self.led_width_edit.setPlaceholderText("宽，如 1024")
+        self.led_height_edit = QLineEdit(str(self.config.get("led_height", 96)))
+        self.led_height_edit.setPlaceholderText("高，如 96")
+        size_layout.addWidget(self.led_width_edit)
+        size_layout.addWidget(QLabel("×"))
+        size_layout.addWidget(self.led_height_edit)
+        led_form.addRow("像素尺寸:", size_layout)
+        size_hint = QLabel("请按学校施工方确认的实际像素尺寸填写，必须与控制卡配置一致。")
+        size_hint.setWordWrap(True)
+        size_hint.setStyleSheet("color:#6b7280;font-size:12px;")
+        led_form.addRow("", size_hint)
+
         self.led_page_seconds_edit = QLineEdit(
             str(self.config.get("led_page_seconds", 5))
         )
@@ -94,8 +120,14 @@ class SettingsDialog(QDialog):
         self.led_grades_per_page_edit = QLineEdit(
             str(self.config.get("led_grades_per_page", 2))
         )
-        self.led_grades_per_page_edit.setPlaceholderText("每屏显示 1-6 个年级")
-        led_form.addRow("每屏年级数:", self.led_grades_per_page_edit)
+        self.led_grades_per_page_edit.setPlaceholderText("每个横向分区显示 1-6 行")
+        led_form.addRow("每区行数:", self.led_grades_per_page_edit)
+
+        self.led_layout_regions_edit = QLineEdit(
+            str(self.config.get("led_layout_regions", 1))
+        )
+        self.led_layout_regions_edit.setPlaceholderText("横向分区数 1-6")
+        led_form.addRow("横向分区数:", self.led_layout_regions_edit)
 
         self.led_dismissed_delay_edit = QLineEdit(
             str(self.config.get("led_dismissed_delay_seconds", 5))
@@ -103,12 +135,18 @@ class SettingsDialog(QDialog):
         self.led_dismissed_delay_edit.setPlaceholderText("放学中变为已放学的秒数")
         led_form.addRow("已放学延迟(秒):", self.led_dismissed_delay_edit)
 
+        self.led_show_title_check = QCheckBox("显示左侧标题")
+        self.led_show_title_check.setChecked(self.config.get("led_show_title", True))
+        led_form.addRow("标题区域:", self.led_show_title_check)
+
         self.led_title_edit = QPlainTextEdit()
         self.led_title_edit.setPlainText(
             self.config.get("led_school_title", "数智家校\n放学系统")
         )
         self.led_title_edit.setMaximumHeight(72)
         self.led_title_edit.setPlaceholderText("学校名称\n数智家校\n放学系统")
+        self.led_title_edit.setEnabled(self.led_show_title_check.isChecked())
+        self.led_show_title_check.toggled.connect(self.led_title_edit.setEnabled)
         led_form.addRow("左侧标题:", self.led_title_edit)
 
         led_test_layout = QHBoxLayout()
@@ -122,7 +160,7 @@ class SettingsDialog(QDialog):
         self.led_restore_btn.clicked.connect(self.reset_led_screen)
         led_test_layout.addWidget(self.led_restore_btn)
         led_form.addRow("设备测试:", led_test_layout)
-        layout.addWidget(led_group)
+        left_layout.addWidget(led_group)
 
         # Buttons
         btn_layout = QHBoxLayout()
@@ -140,7 +178,58 @@ class SettingsDialog(QDialog):
             sync_btn.clicked.connect(self.trigger_sync)
             btn_layout.addWidget(sync_btn)
 
-        layout.addLayout(btn_layout)
+        left_layout.addLayout(btn_layout)
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setWidget(left_widget)
+        layout.addWidget(left_scroll, stretch=4)
+
+        preview_group = QGroupBox("LED 内容预览（本地预览，不会发送到控制卡）")
+        preview_layout = QVBoxLayout(preview_group)
+        self.preview_label = QLabel("正在生成预览…")
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.setMinimumSize(560, 260)
+        self.preview_label.setStyleSheet(
+            "background:#111827;color:#d1d5db;border:1px solid #374151;"
+        )
+        preview_layout.addWidget(self.preview_label, stretch=1)
+        self.preview_status_label = QLabel("")
+        self.preview_status_label.setWordWrap(True)
+        self.preview_status_label.setStyleSheet("color:#6b7280;")
+        preview_layout.addWidget(self.preview_status_label)
+
+        preview_controls = QHBoxLayout()
+        self.preview_prev_btn = QPushButton("上一页")
+        self.preview_prev_btn.clicked.connect(self.show_previous_preview_page)
+        preview_controls.addWidget(self.preview_prev_btn)
+        self.preview_page_label = QLabel("0 / 0")
+        self.preview_page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview_controls.addWidget(self.preview_page_label, stretch=1)
+        self.preview_next_btn = QPushButton("下一页")
+        self.preview_next_btn.clicked.connect(self.show_next_preview_page)
+        preview_controls.addWidget(self.preview_next_btn)
+        preview_layout.addLayout(preview_controls)
+
+        self.preview_sample_check = QCheckBox("使用示例状态预览")
+        self.preview_sample_check.setChecked(True)
+        self.preview_sample_check.toggled.connect(self.schedule_led_preview)
+        preview_layout.addWidget(self.preview_sample_check)
+        layout.addWidget(preview_group, stretch=6)
+
+        for editor in (
+            self.led_width_edit,
+            self.led_height_edit,
+            self.led_grades_per_page_edit,
+            self.led_layout_regions_edit,
+            self.led_title_edit,
+        ):
+            if isinstance(editor, QPlainTextEdit):
+                editor.textChanged.connect(self.schedule_led_preview)
+            else:
+                editor.textChanged.connect(self.schedule_led_preview)
+        self.led_show_title_check.toggled.connect(self.schedule_led_preview)
+        self.schedule_led_preview()
 
     def save_settings(self):
         new_school_id = self.school_id_edit.text().strip()
@@ -183,12 +272,16 @@ class SettingsDialog(QDialog):
         self.config.set("led_enabled", new_led_enabled)
         self.config.set("led_controller_ip", led_values["ip"])
         self.config.set("led_controller_port", led_values["port"])
+        self.config.set("led_width", led_values["width"])
+        self.config.set("led_height", led_values["height"])
         self.config.set("led_page_seconds", led_values["page_seconds"])
         self.config.set("led_grades_per_page", led_values["grades_per_page"])
+        self.config.set("led_layout_regions", led_values["regions_per_page"])
         self.config.set(
             "led_dismissed_delay_seconds",
             led_values["dismissed_delay_seconds"],
         )
+        self.config.set("led_show_title", led_values["show_title"])
         self.config.set("led_school_title", led_values["title"])
         # Time settings removed
         self.config.save()
@@ -252,28 +345,45 @@ class SettingsDialog(QDialog):
     def fill_local_device_no(self):
         self.device_no_edit.setText(format_device_no_from_node(uuid.getnode()))
 
-    def _get_led_values(self):
+    def _get_led_values(self, show_errors=True):
+        def fail(message):
+            if show_errors:
+                QMessageBox.warning(self, "错误", message)
+            return None
+
         ip = self.led_ip_edit.text().strip()
         title = self.led_title_edit.toPlainText().strip()
+        show_title = self.led_show_title_check.isChecked()
         try:
             ipaddress.ip_address(ip)
         except ValueError:
-            QMessageBox.warning(self, "错误", "控制卡 IP 格式不正确")
-            return None
+            return fail("控制卡 IP 格式不正确")
         try:
             port = int(self.led_port_edit.text().strip())
             if not 1 <= port <= 65535:
                 raise ValueError()
         except ValueError:
-            QMessageBox.warning(self, "错误", "控制卡端口必须是 1-65535 的数字")
-            return None
+            return fail("控制卡端口必须是 1-65535 的数字")
+        try:
+            width = int(self.led_width_edit.text().strip())
+            height = int(self.led_height_edit.text().strip())
+            if (
+                not 8 <= width <= 2048
+                or not 8 <= height <= 2048
+                or width * height > 524288
+            ):
+                raise ValueError()
+        except ValueError:
+            return fail(
+                "BX-6E1XP 像素宽度须为 8-2048，高度须为 8-2048，"
+                "且总像素点不能超过 524288"
+            )
         try:
             page_seconds = float(self.led_page_seconds_edit.text().strip())
             if not 1 <= page_seconds <= 300:
                 raise ValueError()
         except ValueError:
-            QMessageBox.warning(self, "错误", "翻页间隔必须是 1-300 秒")
-            return None
+            return fail("翻页间隔必须是 1-300 秒")
         try:
             dismissed_delay_seconds = float(
                 self.led_dismissed_delay_edit.text().strip()
@@ -281,26 +391,112 @@ class SettingsDialog(QDialog):
             if not 1 <= dismissed_delay_seconds <= 300:
                 raise ValueError()
         except ValueError:
-            QMessageBox.warning(self, "错误", "已放学延迟必须是 1-300 秒")
-            return None
+            return fail("已放学延迟必须是 1-300 秒")
         try:
             grades_per_page = int(self.led_grades_per_page_edit.text().strip())
             if not 1 <= grades_per_page <= 6:
                 raise ValueError()
         except ValueError:
-            QMessageBox.warning(self, "错误", "每屏年级数必须是 1-6 的整数")
-            return None
-        if not title:
-            QMessageBox.warning(self, "错误", "LED 左侧标题不能为空")
-            return None
+            return fail("每区行数必须是 1-6 的整数")
+        try:
+            regions_per_page = int(self.led_layout_regions_edit.text().strip())
+            if not 1 <= regions_per_page <= 6:
+                raise ValueError()
+        except ValueError:
+            return fail("横向分区数必须是 1-6 的整数")
+        if show_title and not title:
+            return fail("显示左侧标题时，标题内容不能为空")
         return {
             "ip": ip,
             "port": port,
+            "width": width,
+            "height": height,
             "page_seconds": page_seconds,
             "grades_per_page": grades_per_page,
+            "regions_per_page": regions_per_page,
             "dismissed_delay_seconds": dismissed_delay_seconds,
+            "show_title": show_title,
             "title": title,
         }
+
+    def schedule_led_preview(self, *_args):
+        self._preview_timer.start()
+
+    def refresh_led_preview(self):
+        values = self._get_led_values(show_errors=False)
+        if values is None:
+            self._preview_pages = []
+            self.preview_label.setText("请先填写有效的 LED 配置")
+            self.preview_page_label.setText("0 / 0")
+            self.preview_status_label.setText("像素尺寸、分区数或每区行数格式不正确。")
+            self._update_preview_buttons()
+            return
+        if not self.led_service:
+            self.preview_label.setText("LED 服务未初始化，暂时无法生成预览")
+            self.preview_status_label.setText("")
+            return
+        try:
+            preview_dir = Path(get_app_root()) / "data" / "led-preview"
+            self._preview_pages = self.led_service.render_preview_pages(
+                preview_dir,
+                width=values["width"],
+                height=values["height"],
+                grades_per_page=values["grades_per_page"],
+                regions_per_page=values["regions_per_page"],
+                show_title=values["show_title"],
+                title=values["title"],
+                sample_statuses=self.preview_sample_check.isChecked(),
+            )
+        except Exception as exc:
+            self._preview_pages = []
+            self.preview_label.setText("预览生成失败")
+            self.preview_status_label.setText(str(exc))
+            self._update_preview_buttons()
+            return
+        self._preview_index = min(self._preview_index, max(0, len(self._preview_pages) - 1))
+        if not self._preview_pages:
+            self.preview_label.setText("暂无可预览的班级")
+            self.preview_status_label.setText("请先绑定学校并同步行政班或社团班数据。")
+        else:
+            self.preview_status_label.setText(
+                f"{values['width']}×{values['height']} 像素 · "
+                f"{values['regions_per_page']} 个横向分区 · "
+                f"每区 {values['grades_per_page']} 行"
+            )
+            self._show_preview_page()
+        self._update_preview_buttons()
+
+    def _show_preview_page(self):
+        if not self._preview_pages:
+            return
+        pixmap = QPixmap(str(self._preview_pages[self._preview_index]))
+        self.preview_label.setPixmap(
+            pixmap.scaled(
+                self.preview_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation,
+            )
+        )
+        self.preview_page_label.setText(
+            f"{self._preview_index + 1} / {len(self._preview_pages)}"
+        )
+
+    def _update_preview_buttons(self):
+        has_multiple = len(self._preview_pages) > 1
+        self.preview_prev_btn.setEnabled(has_multiple)
+        self.preview_next_btn.setEnabled(has_multiple)
+        if not self._preview_pages:
+            self.preview_page_label.setText("0 / 0")
+
+    def show_previous_preview_page(self):
+        if self._preview_pages:
+            self._preview_index = (self._preview_index - 1) % len(self._preview_pages)
+            self._show_preview_page()
+
+    def show_next_preview_page(self):
+        if self._preview_pages:
+            self._preview_index = (self._preview_index + 1) % len(self._preview_pages)
+            self._show_preview_page()
 
     def _run_led_action(self, action):
         if not self.led_service:
@@ -342,10 +538,28 @@ class SettingsDialog(QDialog):
                 title=values["title"],
                 stay_seconds=values["page_seconds"],
                 grades_per_page=values["grades_per_page"],
+                regions_per_page=values["regions_per_page"],
+                show_title=values["show_title"],
+                width=values["width"],
+                height=values["height"],
             )
         )
 
     def reset_led_screen(self):
+        confirmation = QMessageBox(self)
+        confirmation.setIcon(QMessageBox.Icon.Warning)
+        confirmation.setWindowTitle("清空班级状态并恢复原节目？")
+        confirmation.setText("将清空当前学校今天的行政班和社团班 LED 状态。")
+        confirmation.setInformativeText(
+            "控制卡将恢复施工方原有节目；之后再次刷卡仍可重新生成放学状态。"
+        )
+        confirmation.setStandardButtons(
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes
+        )
+        confirmation.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        confirmation.button(QMessageBox.StandardButton.Yes).setText("清空状态并恢复")
+        if confirmation.exec() != QMessageBox.StandardButton.Yes:
+            return
         self._run_led_action(
             lambda values: self.led_service.reset_and_restore(
                 ip=values["ip"],
@@ -373,3 +587,8 @@ class SettingsDialog(QDialog):
     def closeEvent(self, event):
         self._closing = True
         super().closeEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._preview_pages:
+            self._show_preview_page()
