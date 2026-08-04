@@ -164,6 +164,15 @@ public final class OnbonLedBridge {
             if (parsed.width < 1 || parsed.height < 1) {
                 throw new IllegalArgumentException("LED 像素尺寸必须大于 0");
             }
+            if (parsed.width > 2048) {
+                throw new IllegalArgumentException("BX-6E1XP 单色屏宽度不能超过 2048 像素");
+            }
+            if (parsed.height > 1024) {
+                throw new IllegalArgumentException("BX-6E1XP 屏幕高度不能超过 1024 像素");
+            }
+            if ((long) parsed.width * parsed.height > 524288L) {
+                throw new IllegalArgumentException("BX-6E1XP 单色屏总像素不能超过 524288");
+            }
             if ("display".equals(parsed.command) && parsed.images.isEmpty()) {
                 throw new IllegalArgumentException("缺少 --images");
             }

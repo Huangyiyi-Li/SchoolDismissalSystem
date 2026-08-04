@@ -5,10 +5,13 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from ..services.device_identity import format_device_no_from_node, normalize_device_no
+from ..services.led_dimensions import validate_led_dimensions
+from ..services.led_preview import colorize_led_preview, scaled_preview_size
 from ..utils.path_utils import get_app_root
 import ipaddress
 import threading
 import uuid
+from io import BytesIO
 from pathlib import Path
 
 class SettingsDialog(QDialog):
@@ -31,6 +34,10 @@ class SettingsDialog(QDialog):
         self.resize(1120, 720)
         self._preview_pages = []
         self._preview_index = 0
+        self._preview_source_pixmap = None
+        self._preview_zoom_percent = 100
+        self._preview_fit_to_window = False
+        self._led_validation_message = ""
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(250)
@@ -106,7 +113,10 @@ class SettingsDialog(QDialog):
         size_layout.addWidget(QLabel("×"))
         size_layout.addWidget(self.led_height_edit)
         led_form.addRow("像素尺寸:", size_layout)
-        size_hint = QLabel("请按学校施工方确认的实际像素尺寸填写，必须与控制卡配置一致。")
+        size_hint = QLabel(
+            "填写施工方确认的实际像素：宽≤2048，高≤1024，总像素≤524288。"
+            "只支持正整数，不强制 8/16/32 倍数；必须与控制卡配置完全一致。"
+        )
         size_hint.setWordWrap(True)
         size_hint.setStyleSheet("color:#6b7280;font-size:12px;")
         led_form.addRow("", size_hint)
@@ -189,11 +199,20 @@ class SettingsDialog(QDialog):
         preview_layout = QVBoxLayout(preview_group)
         self.preview_label = QLabel("正在生成预览…")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumSize(560, 260)
+        self.preview_label.resize(560, 260)
         self.preview_label.setStyleSheet(
-            "background:#111827;color:#d1d5db;border:1px solid #374151;"
+            "background:#050000;color:#d1d5db;"
         )
-        preview_layout.addWidget(self.preview_label, stretch=1)
+        self.preview_scroll = QScrollArea()
+        self.preview_scroll.setWidgetResizable(False)
+        self.preview_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_scroll.setMinimumSize(560, 260)
+        self.preview_scroll.setStyleSheet(
+            "QScrollArea{background:#050000;border:1px solid #374151;}"
+            "QScrollBar{background:#1f2937;}"
+        )
+        self.preview_scroll.setWidget(self.preview_label)
+        preview_layout.addWidget(self.preview_scroll, stretch=1)
         self.preview_status_label = QLabel("")
         self.preview_status_label.setWordWrap(True)
         self.preview_status_label.setStyleSheet("color:#6b7280;")
@@ -210,6 +229,30 @@ class SettingsDialog(QDialog):
         self.preview_next_btn.clicked.connect(self.show_next_preview_page)
         preview_controls.addWidget(self.preview_next_btn)
         preview_layout.addLayout(preview_controls)
+
+        zoom_controls = QHBoxLayout()
+        zoom_controls.addWidget(QLabel("预览缩放:"))
+        self.preview_zoom_out_btn = QPushButton("－")
+        self.preview_zoom_out_btn.setToolTip("缩小预览")
+        self.preview_zoom_out_btn.clicked.connect(self.zoom_preview_out)
+        zoom_controls.addWidget(self.preview_zoom_out_btn)
+        self.preview_zoom_label = QLabel("100%")
+        self.preview_zoom_label.setMinimumWidth(48)
+        self.preview_zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        zoom_controls.addWidget(self.preview_zoom_label)
+        self.preview_zoom_in_btn = QPushButton("＋")
+        self.preview_zoom_in_btn.setToolTip("放大预览")
+        self.preview_zoom_in_btn.clicked.connect(self.zoom_preview_in)
+        zoom_controls.addWidget(self.preview_zoom_in_btn)
+        self.preview_actual_size_btn = QPushButton("100%")
+        self.preview_actual_size_btn.setToolTip("一个图片像素对应一个屏幕像素")
+        self.preview_actual_size_btn.clicked.connect(self.reset_preview_zoom)
+        zoom_controls.addWidget(self.preview_actual_size_btn)
+        self.preview_fit_btn = QPushButton("适应窗口")
+        self.preview_fit_btn.clicked.connect(self.fit_preview_to_window)
+        zoom_controls.addWidget(self.preview_fit_btn)
+        zoom_controls.addStretch(1)
+        preview_layout.addLayout(zoom_controls)
 
         self.preview_sample_check = QCheckBox("使用示例状态预览")
         self.preview_sample_check.setChecked(True)
@@ -346,7 +389,10 @@ class SettingsDialog(QDialog):
         self.device_no_edit.setText(format_device_no_from_node(uuid.getnode()))
 
     def _get_led_values(self, show_errors=True):
+        self._led_validation_message = ""
+
         def fail(message):
+            self._led_validation_message = message
             if show_errors:
                 QMessageBox.warning(self, "错误", message)
             return None
@@ -364,20 +410,13 @@ class SettingsDialog(QDialog):
                 raise ValueError()
         except ValueError:
             return fail("控制卡端口必须是 1-65535 的数字")
-        try:
-            width = int(self.led_width_edit.text().strip())
-            height = int(self.led_height_edit.text().strip())
-            if (
-                not 8 <= width <= 2048
-                or not 8 <= height <= 2048
-                or width * height > 524288
-            ):
-                raise ValueError()
-        except ValueError:
-            return fail(
-                "BX-6E1XP 像素宽度须为 8-2048，高度须为 8-2048，"
-                "且总像素点不能超过 524288"
-            )
+        dimensions = validate_led_dimensions(
+            self.led_width_edit.text(),
+            self.led_height_edit.text(),
+        )
+        if not dimensions.ok:
+            return fail(dimensions.message)
+        width, height = dimensions.width, dimensions.height
         try:
             page_seconds = float(self.led_page_seconds_edit.text().strip())
             if not 1 <= page_seconds <= 300:
@@ -426,13 +465,15 @@ class SettingsDialog(QDialog):
         values = self._get_led_values(show_errors=False)
         if values is None:
             self._preview_pages = []
-            self.preview_label.setText("请先填写有效的 LED 配置")
+            self._show_preview_message("请先填写有效的 LED 配置")
             self.preview_page_label.setText("0 / 0")
-            self.preview_status_label.setText("像素尺寸、分区数或每区行数格式不正确。")
+            self.preview_status_label.setText(
+                self._led_validation_message or "LED 配置格式不正确。"
+            )
             self._update_preview_buttons()
             return
         if not self.led_service:
-            self.preview_label.setText("LED 服务未初始化，暂时无法生成预览")
+            self._show_preview_message("LED 服务未初始化，暂时无法生成预览")
             self.preview_status_label.setText("")
             return
         try:
@@ -449,19 +490,19 @@ class SettingsDialog(QDialog):
             )
         except Exception as exc:
             self._preview_pages = []
-            self.preview_label.setText("预览生成失败")
+            self._show_preview_message("预览生成失败")
             self.preview_status_label.setText(str(exc))
             self._update_preview_buttons()
             return
         self._preview_index = min(self._preview_index, max(0, len(self._preview_pages) - 1))
         if not self._preview_pages:
-            self.preview_label.setText("暂无可预览的班级")
+            self._show_preview_message("暂无可预览的班级")
             self.preview_status_label.setText("请先绑定学校并同步行政班或社团班数据。")
         else:
             self.preview_status_label.setText(
                 f"{values['width']}×{values['height']} 像素 · "
                 f"{values['regions_per_page']} 个横向分区 · "
-                f"每区 {values['grades_per_page']} 行"
+                f"每区 {values['grades_per_page']} 行 · 黑底红字为单色 LED 模拟效果"
             )
             self._show_preview_page()
         self._update_preview_buttons()
@@ -469,17 +510,83 @@ class SettingsDialog(QDialog):
     def _show_preview_page(self):
         if not self._preview_pages:
             return
-        pixmap = QPixmap(str(self._preview_pages[self._preview_index]))
-        self.preview_label.setPixmap(
-            pixmap.scaled(
-                self.preview_label.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.FastTransformation,
+        try:
+            preview_image = colorize_led_preview(
+                self._preview_pages[self._preview_index]
             )
-        )
+            image_bytes = BytesIO()
+            preview_image.save(image_bytes, format="PNG")
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(image_bytes.getvalue(), "PNG"):
+                raise ValueError("无法加载 LED 预览图片")
+            self._preview_source_pixmap = pixmap
+        except Exception as exc:
+            self._show_preview_message("预览加载失败")
+            self.preview_status_label.setText(str(exc))
+            return
+        self._apply_preview_zoom()
         self.preview_page_label.setText(
             f"{self._preview_index + 1} / {len(self._preview_pages)}"
         )
+
+    def _show_preview_message(self, message):
+        self._preview_source_pixmap = None
+        self.preview_label.clear()
+        self.preview_label.setText(message)
+        viewport_size = self.preview_scroll.viewport().size()
+        self.preview_label.resize(
+            max(1, viewport_size.width()),
+            max(1, viewport_size.height()),
+        )
+
+    def _apply_preview_zoom(self):
+        pixmap = self._preview_source_pixmap
+        if pixmap is None or pixmap.isNull():
+            return
+        if self._preview_fit_to_window:
+            viewport = self.preview_scroll.viewport().size()
+            scale = min(
+                max(1, viewport.width() - 8) / pixmap.width(),
+                max(1, viewport.height() - 8) / pixmap.height(),
+            )
+            target_width = max(1, round(pixmap.width() * scale))
+            target_height = max(1, round(pixmap.height() * scale))
+            self.preview_zoom_label.setText("适应")
+        else:
+            target_width, target_height = scaled_preview_size(
+                pixmap.width(),
+                pixmap.height(),
+                self._preview_zoom_percent,
+            )
+            self.preview_zoom_label.setText(f"{self._preview_zoom_percent}%")
+        scaled = pixmap.scaled(
+            target_width,
+            target_height,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.FastTransformation,
+        )
+        self.preview_label.clear()
+        self.preview_label.resize(target_width, target_height)
+        self.preview_label.setPixmap(scaled)
+
+    def zoom_preview_in(self):
+        self._preview_fit_to_window = False
+        self._preview_zoom_percent = min(400, self._preview_zoom_percent + 25)
+        self._apply_preview_zoom()
+
+    def zoom_preview_out(self):
+        self._preview_fit_to_window = False
+        self._preview_zoom_percent = max(25, self._preview_zoom_percent - 25)
+        self._apply_preview_zoom()
+
+    def reset_preview_zoom(self):
+        self._preview_fit_to_window = False
+        self._preview_zoom_percent = 100
+        self._apply_preview_zoom()
+
+    def fit_preview_to_window(self):
+        self._preview_fit_to_window = True
+        self._apply_preview_zoom()
 
     def _update_preview_buttons(self):
         has_multiple = len(self._preview_pages) > 1
@@ -590,5 +697,9 @@ class SettingsDialog(QDialog):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self._preview_pages:
-            self._show_preview_page()
+        if (
+            self._preview_fit_to_window
+            and self._preview_source_pixmap is not None
+            and not self._preview_source_pixmap.isNull()
+        ):
+            self._apply_preview_zoom()
