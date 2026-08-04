@@ -303,6 +303,54 @@ class BroadcastManager(QObject):
 
         return {"result": "success"}
 
+    def simulate_class_swipe(self, class_id):
+        """Simulate an administrative-class swipe without contacting the server."""
+        if not self.config.get("test_mode", False):
+            return {"result": "fail", "message": "请先开启测试模式"}
+
+        class_id = str(class_id or "").strip()
+        school_id = self.config.get("school_id")
+        classes = self.db.get_led_classes(school_id)
+        class_info = next(
+            (
+                item
+                for item in classes
+                if str(item.get("class_id") or "").strip() == class_id
+            ),
+            None,
+        )
+        if class_info is None:
+            return {
+                "result": "fail",
+                "message": "未找到该行政班，请先同步学校数据",
+            }
+
+        class_name = (
+            class_info.get("class_voice_name")
+            or class_info.get("class_show_name")
+            or class_info.get("class_name")
+        )
+        if not class_name:
+            return {
+                "result": "fail",
+                "message": "该班级缺少可播报名称，请先同步学校数据",
+            }
+
+        # Test mode also owns the LED outside the configured dismissal window.
+        self.sync_led_window_state()
+        self.tts_worker.add_text(build_dismissal_voice_text(class_name))
+        self._mark_led_dismissing(class_id, 1)
+        self._log_event(
+            "",
+            class_name,
+            "语音播报",
+            "测试模式/本地模拟，不推送服务端",
+            class_type=1,
+            source="模拟刷卡",
+            source_detail=f"classId={class_id}",
+        )
+        return {"result": "success", "message": f"已模拟{class_name}刷卡"}
+
     def _mark_led_dismissing(self, class_id, class_type=None):
         led_service = getattr(self, "led_service", None)
         try:

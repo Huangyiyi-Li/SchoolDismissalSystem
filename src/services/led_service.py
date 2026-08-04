@@ -11,6 +11,7 @@ from ..utils.path_utils import get_app_root
 class LedService:
     STATUS_DISMISSING = "放学中"
     STATUS_DISMISSED = "已放学"
+    WINDOW_REFRESH_RETRY_SECONDS = 10
 
     def __init__(
         self,
@@ -45,6 +46,8 @@ class LedService:
         self._window_restore_pending = False
         self._window_restore_in_flight = False
         self._window_restore_epoch = 0
+        self._window_refresh_pending = False
+        self._next_window_refresh_retry_at = None
         self._refresh_scheduled = False
         self._refresh_requested = False
         self._shutdown_event = threading.Event()
@@ -227,20 +230,37 @@ class LedService:
 
     def set_dismissal_active(self, active):
         active = bool(active)
+        should_retry_refresh = False
         with self._lock:
             if self._dismissal_state_initialized and self._dismissal_active == active:
                 if active:
+                    should_retry_refresh = bool(
+                        self._window_refresh_pending
+                        and (
+                            self._next_window_refresh_retry_at is None
+                            or self.clock() >= self._next_window_refresh_retry_at
+                        )
+                    )
+                else:
+                    self._queue_window_restore()
+                if not should_retry_refresh:
                     return False
-                self._queue_window_restore()
-                return False
-            self._dismissal_state_initialized = True
-            self._dismissal_active = active
-            self._window_restore_epoch += 1
+            else:
+                self._dismissal_state_initialized = True
+                self._dismissal_active = active
+                self._window_restore_epoch += 1
         if active:
             with self._lock:
                 self._window_restore_pending = False
+                self._window_refresh_pending = True
+                self._next_window_refresh_retry_at = self.clock() + datetime.timedelta(
+                    seconds=self.WINDOW_REFRESH_RETRY_SECONDS
+                )
             self.refresh_async()
-            return True
+            return not should_retry_refresh
+        with self._lock:
+            self._window_refresh_pending = False
+            self._next_window_refresh_retry_at = None
         self.reset_statuses()
         had_session, _ = self._stop_display_session()
         with self._lock:
@@ -321,6 +341,17 @@ class LedService:
                 self._log_failed_result("刷新", result)
             except Exception as exc:
                 print(f"[LED] Refresh error: {exc}")
+
+        with self._lock:
+            if self._dismissal_active:
+                if result is not None and result.ok:
+                    self._window_refresh_pending = False
+                    self._next_window_refresh_retry_at = None
+                else:
+                    self._window_refresh_pending = True
+                    self._next_window_refresh_retry_at = self.clock() + datetime.timedelta(
+                        seconds=self.WINDOW_REFRESH_RETRY_SECONDS
+                    )
 
         with self._schedule_lock:
             should_resubmit = (

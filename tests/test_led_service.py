@@ -821,6 +821,36 @@ class LedServiceTests(unittest.TestCase):
             self.assertTrue(refresh_scheduled)
             self.assertEqual(len(queued), 1)
 
+    def test_failed_window_activation_is_retried_after_ten_seconds(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            current = [datetime.datetime(2026, 8, 4, 16, 30, 0)]
+            bridge = FakeBridge()
+            bridge.display_results = [
+                BridgeResult(False, "offline"),
+                BridgeResult(True, "sent"),
+            ]
+            service = LedService(
+                FakeConfig({"school_id": "40125"}),
+                self.make_db(tmpdir),
+                bridge=bridge,
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+                clock=lambda: current[0],
+                dismissal_active=False,
+            )
+
+            service.set_dismissal_active(True)
+            service.set_dismissal_active(True)
+            self.assertEqual(len(bridge.displays), 1)
+
+            current[0] += datetime.timedelta(seconds=10)
+            service.set_dismissal_active(True)
+
+            self.assertEqual(len(bridge.displays), 2)
+            current[0] += datetime.timedelta(seconds=10)
+            service.set_dismissal_active(True)
+            self.assertEqual(len(bridge.displays), 2)
+
     def test_rotation_continues_after_transient_send_failure(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = self.make_db(tmpdir)

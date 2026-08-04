@@ -27,6 +27,22 @@ class FakeDb:
     def get_class_info_by_card(self, card_id):
         return self.class_info
 
+    def get_led_classes(self, school_id=None):
+        class_name, class_id, stored_school_id, class_type, show_name, voice_name = self.class_info
+        if not class_name or int(class_type or 0) != 1:
+            return []
+        return [
+            {
+                "school_id": stored_school_id,
+                "class_type": class_type,
+                "class_id": class_id,
+                "grade_name": "一年级",
+                "class_name": class_name,
+                "class_show_name": show_name,
+                "class_voice_name": voice_name,
+            }
+        ]
+
 
 class FakeConfig:
     def __init__(self, values=None):
@@ -232,6 +248,39 @@ class ManualDismissalTests(unittest.TestCase):
 
         self.assertFalse(active)
         self.assertEqual(manager.led_service.window_states, [False])
+
+    def test_simulated_swipe_in_test_mode_uses_catalog_and_triggers_voice_and_led(self):
+        manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
+        manager.config = FakeConfig({"test_mode": True, "school_id": "40125"})
+        manager.get_current_window_signature = lambda class_type=None: None
+
+        result = manager.simulate_class_swipe("123")
+
+        self.assertEqual(result, {"result": "success", "message": "已模拟一年级一班刷卡"})
+        self.assertEqual(manager.tts_worker.texts, ["一年级一班正在放学"])
+        self.assertEqual(manager.led_service.window_states, [True])
+        self.assertEqual(manager.led_service.updates, ["123"])
+        self.assertEqual(manager.logged_events[0]["source"], "模拟刷卡")
+        self.assertEqual(manager.logged_events[0]["source_detail"], "classId=123")
+
+    def test_simulated_swipe_is_rejected_outside_test_mode(self):
+        manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
+        manager.config = FakeConfig({"test_mode": False, "school_id": "40125"})
+
+        result = manager.simulate_class_swipe("123")
+
+        self.assertEqual(result, {"result": "fail", "message": "请先开启测试模式"})
+        self.assertEqual(manager.tts_worker.texts, [])
+        self.assertEqual(manager.led_service.updates, [])
+
+    def test_simulated_swipe_rejects_class_missing_from_led_catalog(self):
+        manager = self.make_manager((None, "123", "40125", 1, None, None))
+        manager.config = FakeConfig({"test_mode": True, "school_id": "40125"})
+
+        result = manager.simulate_class_swipe("404")
+
+        self.assertEqual(result, {"result": "fail", "message": "未找到该行政班，请先同步学校数据"})
+        self.assertEqual(manager.tts_worker.texts, [])
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QGroupBox, QTableWidget, QTableWidgetItem,
-                             QLabel, QHeaderView, QMessageBox, QToolBar)
+                             QLabel, QHeaderView, QMessageBox, QToolBar,
+                             QPushButton, QInputDialog)
 from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtCore import Qt, QTimer
 # Fix import paths assuming running from project root or having src in pythonpath
@@ -179,10 +180,15 @@ class MainWindow(QMainWindow):
         self.test_mode_check = QCheckBox("测试模式 (仅播报，不推送)")
         self.test_mode_check.setChecked(self.config.get("test_mode", False))
         self.test_mode_check.stateChanged.connect(self.toggle_test_mode)
+        self.simulate_swipe_button = QPushButton("模拟刷卡")
+        self.simulate_swipe_button.setEnabled(self.test_mode_check.isChecked())
+        self.simulate_swipe_button.setToolTip("测试模式下选择一个行政班，模拟刷卡、语音和 LED 状态变化")
+        self.simulate_swipe_button.clicked.connect(self.simulate_class_swipe)
         
         status_layout.addWidget(self.window_label)
         status_layout.addWidget(self.status_label)
         status_layout.addWidget(self.test_mode_check)
+        status_layout.addWidget(self.simulate_swipe_button)
         version_label = QLabel(APP_VERSION_LABEL)
         version_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         version_label.setStyleSheet("color: #6b7280; font-size: 12px; font-weight: 400;")
@@ -275,6 +281,7 @@ class MainWindow(QMainWindow):
                 self.test_mode_check.blockSignals(False)
                 return
         self.config.set("test_mode", is_test)
+        self.simulate_swipe_button.setEnabled(is_test)
         # Apply the effective LED window immediately instead of waiting for the
         # periodic status timer.
         self.broadcast_manager.sync_led_window_state()
@@ -296,6 +303,47 @@ class MainWindow(QMainWindow):
             self.test_mode_check.setStyleSheet("color: blue; font-weight: bold;")
         else:
             self.test_mode_check.setStyleSheet("")
+
+    def simulate_class_swipe(self):
+        if not self.config.get("test_mode", False):
+            QMessageBox.warning(self, "模拟刷卡", "请先开启测试模式。")
+            return
+
+        school_id = self.config.get("school_id")
+        classes = self.db.get_led_classes(school_id)
+        if not classes:
+            QMessageBox.warning(
+                self,
+                "模拟刷卡",
+                "暂无可测试的行政班，请先绑定学校并同步数据。",
+            )
+            return
+
+        labels = []
+        for item in classes:
+            class_name = item.get("class_show_name") or item.get("class_name") or "未命名班级"
+            grade_name = item.get("grade_name") or ""
+            labels.append(f"{grade_name} - {class_name}" if grade_name else class_name)
+
+        selected, accepted = QInputDialog.getItem(
+            self,
+            "模拟刷卡",
+            "选择要模拟刷卡的班级：",
+            labels,
+            0,
+            False,
+        )
+        if not accepted:
+            return
+
+        selected_class = classes[labels.index(selected)]
+        result = self.broadcast_manager.simulate_class_swipe(
+            selected_class.get("class_id")
+        )
+        if result.get("result") == "success":
+            QMessageBox.information(self, "模拟刷卡", result.get("message", "模拟成功"))
+        else:
+            QMessageBox.warning(self, "模拟刷卡", result.get("message", "模拟失败"))
 
     def _log_test_mode_change(self, enabled, reason):
         action = "开启" if enabled else "关闭"
