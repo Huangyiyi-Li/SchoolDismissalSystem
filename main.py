@@ -8,11 +8,12 @@ sys.path.insert(0, src_dir)
 
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
-from src.app_info import APP_NAME
+from src.app_info import APP_NAME, APP_VERSION
 from src.services.config_manager import ConfigManager
 from src.services.udp_server import UDPServerService
 from src.services.broadcast_manager import BroadcastManager
 from src.services.led_service import LedService
+from src.services.operation_log import default_operation_logger
 from src.services.device_identity import get_or_create_device_no
 from src.database import DatabaseManager
 from src.ui.main_window import MainWindow
@@ -26,9 +27,22 @@ def main():
     # Initialize Core Services
     config_manager = ConfigManager()
     db_manager = DatabaseManager()
+    default_operation_logger.record(
+        category="系统",
+        action="软件启动",
+        target=f"v{APP_VERSION}",
+        result="info",
+        detail="本地服务开始初始化",
+        source="本机",
+    )
     # Until the first schedule check completes, never overwrite the controller's
     # original Ledshow program.
-    led_service = LedService(config_manager, db_manager, dismissal_active=None)
+    led_service = LedService(
+        config_manager,
+        db_manager,
+        dismissal_active=None,
+        operation_logger=default_operation_logger,
+    )
     
     # API & Sync
     from src.services.api_service import ApiService
@@ -57,6 +71,7 @@ def main():
         db_manager,
         api_service=api_service,
         led_service=led_service,
+        operation_logger=default_operation_logger,
     )
     mqtt_service = None
     if config_manager.get("mqtt_enabled", True):
@@ -104,6 +119,14 @@ def main():
         mqtt_service.stop()
     broadcast_manager.cleanup()
     led_service.shutdown()
+    default_operation_logger.record(
+        category="系统",
+        action="软件退出",
+        target=f"v{APP_VERSION}",
+        result="info",
+        detail="本地服务已正常停止",
+        source="本机",
+    )
     sys.exit(exit_code)
 
 if __name__ == "__main__":

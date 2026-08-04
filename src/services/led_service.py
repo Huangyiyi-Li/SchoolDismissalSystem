@@ -23,6 +23,7 @@ class LedService:
         clock=None,
         timer_factory=None,
         dismissal_active=True,
+        operation_logger=None,
     ):
         self.config = config_manager
         self.db = db_manager
@@ -35,6 +36,7 @@ class LedService:
         self._page_files_lock = threading.Lock()
         self._schedule_lock = threading.Lock()
         self._timer_factory = timer_factory or threading.Timer
+        self.operation_logger = operation_logger
         self._dismissal_active = bool(dismissal_active)
         self._dismissal_state_initialized = dismissal_active is not None
         self._display_timer = None
@@ -257,6 +259,13 @@ class LedService:
                     seconds=self.WINDOW_REFRESH_RETRY_SECONDS
                 )
             self.refresh_async()
+            if not should_retry_refresh:
+                self._record_operation(
+                    "时段切换",
+                    "进入放学时段",
+                    result="info",
+                    detail="已安排发送放学节目",
+                )
             return not should_retry_refresh
         with self._lock:
             self._window_refresh_pending = False
@@ -268,6 +277,12 @@ class LedService:
                 self.config.get("led_enabled", False) or had_session
             )
         self._queue_window_restore()
+        self._record_operation(
+            "时段切换",
+            "离开放学时段",
+            result="info",
+            detail="已清空班级状态并安排恢复原节目",
+        )
         return False
 
     def _queue_window_restore(self):
@@ -305,6 +320,13 @@ class LedService:
                 if result.ok and restore_epoch == self._window_restore_epoch:
                     self._window_restore_pending = False
             self._log_failed_result("恢复原节目", result)
+            self._record_operation(
+                "LED 屏",
+                "恢复原节目",
+                target=f"{target_ip}:{target_port}",
+                result="success" if result.ok else "fail",
+                detail=result.message,
+            )
             return result
 
         try:
@@ -352,6 +374,15 @@ class LedService:
                     self._next_window_refresh_retry_at = self.clock() + datetime.timedelta(
                         seconds=self.WINDOW_REFRESH_RETRY_SECONDS
                     )
+
+        if result is not None:
+            self._record_operation(
+                "LED 屏",
+                "刷新放学节目",
+                target=self._controller_target(),
+                result="success" if result.ok else "fail",
+                detail=result.message,
+            )
 
         with self._schedule_lock:
             should_resubmit = (
@@ -418,10 +449,45 @@ class LedService:
 
     def test_connection(self, ip=None, port=None):
         with self._operation_lock:
-            return self.bridge.ping(
-                ip or self.config.get("led_controller_ip", "192.168.100.1"),
-                int(port or self.config.get("led_controller_port", 5005)),
+            target_ip = ip or self.config.get("led_controller_ip", "192.168.100.1")
+            target_port = int(port or self.config.get("led_controller_port", 5005))
+            result = self.bridge.ping(target_ip, target_port)
+        self._record_operation(
+            "LED 屏",
+            "测试连接",
+            target=f"{target_ip}:{target_port}",
+            result="success" if result.ok else "fail",
+            detail=result.message,
+        )
+        return result
+
+    def _controller_target(self):
+        return "{}:{}".format(
+            self.config.get("led_controller_ip", "192.168.100.1"),
+            int(self.config.get("led_controller_port", 5005)),
+        )
+
+    def _record_operation(
+        self,
+        category,
+        action,
+        target="",
+        result="",
+        detail="",
+    ):
+        if not self.operation_logger:
+            return
+        try:
+            self.operation_logger.record(
+                category=category,
+                action=action,
+                target=target,
+                result=result,
+                detail=detail,
+                source="本机",
             )
+        except Exception as exc:
+            print(f"[Log] Operation Log Write Error: {exc}")
 
     def clear_async(self, ip=None, port=None):
         target_ip = ip or self.config.get("led_controller_ip", "192.168.100.1")
@@ -453,7 +519,14 @@ class LedService:
             else:
                 result = self.bridge.clear(target_ip, target_port)
         if result.ok:
-            return BridgeResult(True, "已清空班级状态并恢复控制卡原节目")
+            result = BridgeResult(True, "已清空班级状态并恢复控制卡原节目")
+        self._record_operation(
+            "LED 屏",
+            "清空状态并恢复原节目",
+            target=f"{target_ip}:{target_port}",
+            result="success" if result.ok else "fail",
+            detail=result.message,
+        )
         return result
 
     def reset_and_restore_async(self, ip=None, port=None, clear_statuses=True):
@@ -515,12 +588,23 @@ class LedService:
                     else self.config.get("led_grades_per_page", 2)
                 ),
             )
-            return self._start_display_session(
+            result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),
                 int(port or self.config.get("led_controller_port", 5005)),
                 pages,
                 float(stay_seconds or self.config.get("led_page_seconds", 5)),
             )
+        self._record_operation(
+            "LED 屏",
+            "发送测试画面",
+            target="{}:{}".format(
+                ip or self.config.get("led_controller_ip", "192.168.100.1"),
+                int(port or self.config.get("led_controller_port", 5005)),
+            ),
+            result="success" if result.ok else "fail",
+            detail=result.message,
+        )
+        return result
 
     def _start_display_session(
         self,

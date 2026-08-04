@@ -77,12 +77,20 @@ class BroadcastManager(QObject):
     log_updated = pyqtSignal(str, str, str, str, str, str) # time, source, type, name, action, reason
     queue_updated = pyqtSignal(list) # list of class names
 
-    def __init__(self, config_manager, db_manager, api_service=None, led_service=None):
+    def __init__(
+        self,
+        config_manager,
+        db_manager,
+        api_service=None,
+        led_service=None,
+        operation_logger=None,
+    ):
         super().__init__()
         self.config = config_manager
         self.db = db_manager
         self.api_service = api_service
         self.led_service = led_service
+        self.operation_logger = operation_logger
         
         # Ensure logs directory exists
         from ..utils.path_utils import get_app_root
@@ -418,6 +426,20 @@ class BroadcastManager(QObject):
             action,
             reason,
         )
+
+        operation_logger = getattr(self, "operation_logger", None)
+        if operation_logger:
+            try:
+                operation_logger.record(
+                    category="放学业务",
+                    action=action,
+                    target=class_name,
+                    result="fail" if "跳过" in action else "success",
+                    detail=reason,
+                    source=source_text,
+                )
+            except Exception as exc:
+                print(f"[Log] Operation Log Write Error: {exc}")
         
         # File Logging
         try:

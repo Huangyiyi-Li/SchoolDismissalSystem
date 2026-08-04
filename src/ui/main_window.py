@@ -149,6 +149,10 @@ class MainWindow(QMainWindow):
         network_log_action.triggered.connect(self.open_network_log_dialog)
         toolbar.addAction(network_log_action)
 
+        operation_log_action = QAction("本地日志", self)
+        operation_log_action.triggered.connect(self.open_operation_log_dialog)
+        toolbar.addAction(operation_log_action)
+
         startup_action = QAction("开机自启", self)
         startup_action.triggered.connect(self.enable_startup)
         toolbar.addAction(startup_action)
@@ -253,6 +257,11 @@ class MainWindow(QMainWindow):
     def open_network_log_dialog(self):
         from .network_log_dialog import NetworkLogDialog
         dialog = NetworkLogDialog(parent=self)
+        dialog.exec()
+
+    def open_operation_log_dialog(self):
+        from .operation_log_dialog import OperationLogDialog
+        dialog = OperationLogDialog(parent=self)
         dialog.exec()
 
     def enable_startup(self):
