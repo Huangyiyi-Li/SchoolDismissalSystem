@@ -9,6 +9,7 @@ from src.app_info import APP_NAME
 
 TASK_NAME = APP_NAME
 STARTUP_SCRIPT_NAME = f"{APP_NAME}开机启动.vbs"
+RUN_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
 @dataclass
@@ -16,14 +17,6 @@ class StartupTaskResult:
     success: bool
     title: str
     message: str
-
-
-def quote_powershell_string(value):
-    return "'" + str(value).replace("'", "''") + "'"
-
-
-def quote_vbscript_string(value):
-    return '"' + str(value).replace('"', '""') + '"'
 
 
 def get_startup_target():
@@ -47,85 +40,117 @@ def get_user_startup_folder():
     return os.path.join(appdata, "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
 
 
-def build_startup_vbs_script(executable_path, working_directory, arguments="", delay_milliseconds=30000):
+def build_registry_startup_command(executable_path, arguments=""):
     command = f'"{executable_path}"'
     if arguments:
         command += f' "{arguments}"'
-
-    return "\n".join(
-        [
-            'Set WshShell = CreateObject("WScript.Shell")',
-            f"WScript.Sleep {delay_milliseconds}",
-            f"WshShell.CurrentDirectory = {quote_vbscript_string(working_directory)}",
-            f"WshShell.Run {quote_vbscript_string(command)}, 1, False",
-        ]
-    )
+    return command
 
 
-def enable_startup_folder_fallback(executable_path, arguments, working_directory):
+def _get_winreg():
+    import winreg
+
+    return winreg
+
+
+def _read_registry_command():
+    winreg = _get_winreg()
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REGISTRY_PATH) as key:
+            value, _kind = winreg.QueryValueEx(key, TASK_NAME)
+            return str(value or "")
+    except FileNotFoundError:
+        return ""
+
+
+def _write_registry_command(command):
+    winreg = _get_winreg()
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_REGISTRY_PATH) as key:
+        winreg.SetValueEx(key, TASK_NAME, 0, winreg.REG_SZ, command)
+
+
+def _delete_registry_command():
+    winreg = _get_winreg()
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            RUN_REGISTRY_PATH,
+            0,
+            winreg.KEY_SET_VALUE,
+        ) as key:
+            winreg.DeleteValue(key, TASK_NAME)
+    except FileNotFoundError:
+        pass
+
+
+def _legacy_vbs_path():
     startup_folder = get_user_startup_folder()
     if not startup_folder:
-        return StartupTaskResult(
-            success=False,
-            title="开机自启设置失败",
-            message="Windows 未返回当前用户的 Startup 文件夹位置。",
-        )
+        return None
+    return os.path.join(startup_folder, STARTUP_SCRIPT_NAME)
 
-    try:
-        os.makedirs(startup_folder, exist_ok=True)
-        script_path = os.path.join(startup_folder, STARTUP_SCRIPT_NAME)
-        script = build_startup_vbs_script(
-            executable_path=executable_path,
-            arguments=arguments,
-            working_directory=working_directory,
-        )
-        with open(script_path, "w", encoding="utf-8") as file:
-            file.write(script)
-    except Exception as exc:
-        return StartupTaskResult(
-            success=False,
-            title="开机自启设置失败",
-            message=f"任务计划无权限，Startup 启动脚本也创建失败：{exc}",
-        )
 
-    return StartupTaskResult(
-        success=True,
-        title="开机自启已启用",
-        message=(
-            "当前账号无权写入任务计划，已自动改用用户 Startup 启动脚本。\n"
-            "登录后延迟 30 秒启动本系统，并自动设置正确起始目录。\n"
-            f"启动脚本：{script_path}\n"
-            f"程序路径：{executable_path}\n"
-            f"起始目录：{working_directory}"
-        ),
+def _remove_legacy_vbs():
+    script_path = _legacy_vbs_path()
+    if script_path and os.path.exists(script_path):
+        os.remove(script_path)
+
+
+def _task_not_found(output):
+    normalized = str(output or "").lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "cannot find",
+            "not found",
+            "does not exist",
+            "找不到",
+            "不存在",
+        )
     )
 
 
-def build_register_startup_task_script(task_name, executable_path, working_directory, arguments=""):
-    command = [
-        "$ErrorActionPreference = 'Stop'",
-        f"$Action = New-ScheduledTaskAction -Execute {quote_powershell_string(executable_path)}"
-        + (f" -Argument {quote_powershell_string(arguments)}" if arguments else "")
-        + f" -WorkingDirectory {quote_powershell_string(working_directory)}",
-        "$Trigger = New-ScheduledTaskTrigger -AtLogOn",
-        "$Trigger.Delay = 'PT30S'",
-        "$Settings = New-ScheduledTaskSettingsSet "
-        "-StartWhenAvailable "
-        "-MultipleInstances IgnoreNew "
-        "-RestartCount 3 "
-        "-RestartInterval (New-TimeSpan -Minutes 1)",
-        "Register-ScheduledTask "
-        f"-TaskName {quote_powershell_string(task_name)} "
-        "-Action $Action "
-        "-Trigger $Trigger "
-        "-Settings $Settings "
-        f"-Description {quote_powershell_string(f'{APP_NAME}开机自启')} "
-        "-Force | Out-Null",
-    ]
-    return "\n".join(command)
+def _remove_legacy_scheduled_task():
+    completed = subprocess.run(
+        ["schtasks.exe", "/Delete", "/TN", TASK_NAME, "/F"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    detail = (completed.stderr or completed.stdout or "").strip()
+    if completed.returncode != 0 and not _task_not_found(detail):
+        raise RuntimeError(detail or "删除旧任务计划失败")
 
 
-def enable_startup_task(task_name=TASK_NAME):
+def _cleanup_legacy_startup_entries():
+    _remove_legacy_vbs()
+    _remove_legacy_scheduled_task()
+
+
+def get_startup_status():
+    if platform.system() != "Windows":
+        return "disabled"
+    executable_path, arguments, _working_directory = get_startup_target()
+    expected = build_registry_startup_command(executable_path, arguments)
+    try:
+        stored = _read_registry_command()
+    except OSError:
+        return "repair"
+    if stored:
+        return "enabled" if stored.strip().casefold() == expected.casefold() else "repair"
+    legacy_vbs = _legacy_vbs_path()
+    return "repair" if legacy_vbs and os.path.exists(legacy_vbs) else "disabled"
+
+
+def startup_action_label(status):
+    return {
+        "enabled": "关闭开机自启",
+        "repair": "修复开机自启",
+    }.get(status, "启用开机自启")
+
+
+def enable_startup_task():
     if platform.system() != "Windows":
         return StartupTaskResult(
             success=False,
@@ -133,7 +158,7 @@ def enable_startup_task(task_name=TASK_NAME):
             message="一键开机自启只支持 Windows 客户端。",
         )
 
-    executable_path, arguments, working_directory = get_startup_target()
+    executable_path, arguments, _working_directory = get_startup_target()
     if not os.path.exists(executable_path):
         return StartupTaskResult(
             success=False,
@@ -141,59 +166,64 @@ def enable_startup_task(task_name=TASK_NAME):
             message=f"找不到要自启的程序：{executable_path}",
         )
 
-    script = build_register_startup_task_script(
-        task_name=task_name,
-        executable_path=executable_path,
-        arguments=arguments,
-        working_directory=working_directory,
-    )
+    try:
+        _cleanup_legacy_startup_entries()
+    except Exception as exc:
+        return StartupTaskResult(
+            success=False,
+            title="开机自启迁移失败",
+            message=(
+                "清理旧版开机启动项失败，尚未写入新的注册表启动项。\n"
+                f"具体原因：{exc}\n"
+                "请确认安全软件没有阻止删除旧任务计划或 VBS。"
+            ),
+        )
 
     try:
-        completed = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                script,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
+        _write_registry_command(
+            build_registry_startup_command(executable_path, arguments)
         )
     except Exception as exc:
         return StartupTaskResult(
             success=False,
             title="开机自启设置失败",
-            message=str(exc),
+            message=(
+                "无法写入当前用户的 Windows 开机启动项。\n"
+                f"具体原因：{exc}\n"
+                "请确认安全软件没有阻止本程序修改开机启动设置。"
+            ),
         )
-
-    if completed.returncode != 0:
-        fallback_result = enable_startup_folder_fallback(
-            executable_path=executable_path,
-            arguments=arguments,
-            working_directory=working_directory,
-        )
-        if fallback_result.success:
-            return fallback_result
-
-        detail = (completed.stderr or completed.stdout or "").strip()
-        fallback_result.message = (
-            "任务计划程序失败："
-            + (detail or "没有输出具体原因。")
-            + "\n"
-            + fallback_result.message
-        )
-        return fallback_result
 
     return StartupTaskResult(
         success=True,
         title="开机自启已启用",
         message=(
-            "已创建 Windows 任务计划：登录后延迟 30 秒启动本系统。\n"
+            "已写入当前用户的 Windows 注册表开机启动项，无需管理员权限。\n"
             f"程序路径：{executable_path}\n"
-            f"起始目录：{working_directory}"
+            "安装版会保持固定程序路径；如果使用 ZIP 便携版，移动目录后请重新启用。\n"
+            "旧 VBS 和旧任务计划已清理。"
         ),
+    )
+
+
+def disable_startup_task():
+    if platform.system() != "Windows":
+        return StartupTaskResult(
+            success=False,
+            title="当前系统不支持",
+            message="开机自启设置只支持 Windows 客户端。",
+        )
+    try:
+        _delete_registry_command()
+        _cleanup_legacy_startup_entries()
+    except Exception as exc:
+        return StartupTaskResult(
+            success=False,
+            title="关闭开机自启失败",
+            message=f"未能完整删除 Windows 开机启动项。\n具体原因：{exc}",
+        )
+    return StartupTaskResult(
+        success=True,
+        title="开机自启已关闭",
+        message="已删除注册表启动项、旧 VBS 和旧任务计划。",
     )

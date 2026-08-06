@@ -153,9 +153,10 @@ class MainWindow(QMainWindow):
         operation_log_action.triggered.connect(self.open_operation_log_dialog)
         toolbar.addAction(operation_log_action)
 
-        startup_action = QAction("开机自启", self)
-        startup_action.triggered.connect(self.enable_startup)
-        toolbar.addAction(startup_action)
+        self.startup_action = QAction("启用开机自启", self)
+        self.startup_action.triggered.connect(self.toggle_startup)
+        toolbar.addAction(self.startup_action)
+        self._refresh_startup_action()
         
         # Central Widget
         central = QWidget()
@@ -266,9 +267,35 @@ class MainWindow(QMainWindow):
         dialog = OperationLogDialog(parent=self)
         dialog.exec()
 
-    def enable_startup(self):
-        from ..services.startup_task import enable_startup_task
-        result = enable_startup_task()
+    def _refresh_startup_action(self):
+        from ..services.startup_task import get_startup_status, startup_action_label
+
+        self._startup_status = get_startup_status()
+        self.startup_action.setText(startup_action_label(self._startup_status))
+
+    def toggle_startup(self):
+        from ..services.operation_log import default_operation_logger
+        from ..services.startup_task import disable_startup_task, enable_startup_task
+
+        previous_status = self._startup_status
+        disabling = previous_status == "enabled"
+        result = disable_startup_task() if disabling else enable_startup_task()
+        action_name = (
+            "关闭开机自启"
+            if disabling
+            else "修复开机自启"
+            if previous_status == "repair"
+            else "启用开机自启"
+        )
+        default_operation_logger.record(
+            category="系统设置",
+            action=action_name,
+            target=APP_NAME,
+            result="success" if result.success else "fail",
+            detail=result.message,
+            source="本机",
+        )
+        self._refresh_startup_action()
         if result.success:
             QMessageBox.information(self, result.title, result.message)
         else:

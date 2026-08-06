@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     env:
       PYTHONUTF8: "1"
 
@@ -47,9 +47,13 @@ jobs:
           $version = python -c "from src.app_info import APP_VERSION; print(APP_VERSION)"
           $zipName = python -c "from src.app_info import WINDOWS_ZIP_NAME; print(WINDOWS_ZIP_NAME)"
           $shaName = python -c "from src.app_info import WINDOWS_SHA256_NAME; print(WINDOWS_SHA256_NAME)"
+          $setupName = python -c "from src.app_info import WINDOWS_SETUP_NAME; print(WINDOWS_SETUP_NAME)"
+          $setupShaName = python -c "from src.app_info import WINDOWS_SETUP_SHA256_NAME; print(WINDOWS_SETUP_SHA256_NAME)"
           "version=$version" >> $env:GITHUB_OUTPUT
           "zip_name=$zipName" >> $env:GITHUB_OUTPUT
           "sha_name=$shaName" >> $env:GITHUB_OUTPUT
+          "setup_name=$setupName" >> $env:GITHUB_OUTPUT
+          "setup_sha_name=$setupShaName" >> $env:GITHUB_OUTPUT
 
       - name: Run Python tests
         shell: pwsh
@@ -85,6 +89,26 @@ jobs:
           }
           python build_exe.py
 
+      - name: Build current-user Windows installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) {
+            throw "Inno Setup compiler not found: $iscc"
+          }
+          $setupName = "${{ steps.app_info.outputs.setup_name }}"
+          $setupBaseName = [IO.Path]::GetFileNameWithoutExtension($setupName)
+          & $iscc "/DMyAppVersion=${{ steps.app_info.outputs.version }}" "/DMySetupBaseName=$setupBaseName" "installer\windows-installer.iss"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows installer build failed with exit code $LASTEXITCODE"
+          }
+          $setupPath = "dist\$setupName"
+          if (!(Test-Path $setupPath)) {
+            throw "Windows installer was not generated: $setupPath"
+          }
+          $hash = (Get-FileHash $setupPath -Algorithm SHA256).Hash.ToLower()
+          "$hash  $setupName" | Set-Content "dist\${{ steps.app_info.outputs.setup_sha_name }}" -Encoding utf8
+
       - name: Upload Windows build
         continue-on-error: true
         uses: actions/upload-artifact@v4
@@ -94,6 +118,8 @@ jobs:
             dist/数智家校放学系统.exe
             dist/${{ steps.app_info.outputs.zip_name }}
             dist/${{ steps.app_info.outputs.sha_name }}
+            dist/${{ steps.app_info.outputs.setup_name }}
+            dist/${{ steps.app_info.outputs.setup_sha_name }}
           if-no-files-found: error
           retention-days: 30
 
@@ -109,6 +135,8 @@ jobs:
           gh release create "${{ github.ref_name }}" `
             "dist/${{ steps.app_info.outputs.zip_name }}" `
             "dist/${{ steps.app_info.outputs.sha_name }}" `
+            "dist/${{ steps.app_info.outputs.setup_name }}" `
+            "dist/${{ steps.app_info.outputs.setup_sha_name }}" `
             --title "${{ github.ref_name }}" `
             --notes-file "dist/release-notes.md" `
             --prerelease
@@ -125,6 +153,8 @@ jobs:
           gh release create "${{ github.ref_name }}" `
             "dist/${{ steps.app_info.outputs.zip_name }}" `
             "dist/${{ steps.app_info.outputs.sha_name }}" `
+            "dist/${{ steps.app_info.outputs.setup_name }}" `
+            "dist/${{ steps.app_info.outputs.setup_sha_name }}" `
             --title "${{ github.ref_name }}" `
             --notes-file "dist/release-notes.md"
 
@@ -136,14 +166,26 @@ jobs:
         run: |
           $zipPath = Get-ChildItem "dist" -Filter "*-windows-x64.zip" | Select-Object -First 1
           $shaPath = Get-ChildItem "dist" -Filter "*-windows-x64.zip.sha256" | Select-Object -First 1
+          $setupPath = Get-ChildItem "dist" -Filter "*-setup-x64.exe" | Select-Object -First 1
+          $setupShaPath = Get-ChildItem "dist" -Filter "*-setup-x64.exe.sha256" | Select-Object -First 1
           $release = gh api "repos/${{ github.repository }}/releases/tags/${{ github.ref_name }}" | ConvertFrom-Json
           $zipAsset = $release.assets | Where-Object { $_.name.EndsWith(".zip") } | Select-Object -First 1
           $shaAsset = $release.assets | Where-Object { $_.name.EndsWith(".zip.sha256") } | Select-Object -First 1
+          $setupAsset = $release.assets | Where-Object { $_.name.EndsWith("-setup-x64.exe") } | Select-Object -First 1
+          $setupShaAsset = $release.assets | Where-Object { $_.name.EndsWith("-setup-x64.exe.sha256") } | Select-Object -First 1
           $zipDownloadName = "school-dismissal-v${{ steps.app_info.outputs.version }}-windows-x64.zip"
           $shaDownloadName = "$zipDownloadName.sha256"
+          $setupDownloadName = "school-dismissal-v${{ steps.app_info.outputs.version }}-setup-x64.exe"
+          $setupShaDownloadName = "$setupDownloadName.sha256"
           gh api --method PATCH "repos/${{ github.repository }}/releases/assets/$($zipAsset.id)" `
             -f "name=$zipDownloadName" `
             -f "label=$($zipPath.Name)"
           gh api --method PATCH "repos/${{ github.repository }}/releases/assets/$($shaAsset.id)" `
             -f "name=$shaDownloadName" `
             -f "label=$($shaPath.Name)"
+          gh api --method PATCH "repos/${{ github.repository }}/releases/assets/$($setupAsset.id)" `
+            -f "name=$setupDownloadName" `
+            -f "label=$($setupPath.Name)"
+          gh api --method PATCH "repos/${{ github.repository }}/releases/assets/$($setupShaAsset.id)" `
+            -f "name=$setupShaDownloadName" `
+            -f "label=$($setupShaPath.Name)"
