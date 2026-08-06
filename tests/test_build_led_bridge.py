@@ -9,6 +9,15 @@ from tools.build_led_bridge import build_bridge
 
 
 class BuildLedBridgeTests(unittest.TestCase):
+    def test_bridge_validates_requested_color_mode_against_controller_profile(self):
+        source = Path(
+            "led-bridge/src/cn/xxt/dismissal/led/OnbonLedBridge.java"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"--color"', source)
+        self.assertIn("ScreenColorType.DOUBLE", source)
+        self.assertIn("屏幕颜色配置不一致", source)
+
     def make_layout(self, root):
         bridge = root / "led-bridge"
         (bridge / "src" / "example").mkdir(parents=True)

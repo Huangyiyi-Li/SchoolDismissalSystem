@@ -48,6 +48,7 @@ class LedService:
         self._display_index = 0
         self._display_target = None
         self._display_dimensions = (1024, 96)
+        self._display_color_mode = "single"
         self._display_interval = 5.0
         self._window_restore_pending = False
         self._window_restore_in_flight = False
@@ -537,6 +538,7 @@ class LedService:
 
         width = int(self.config.get("led_width", 1024))
         height = int(self.config.get("led_height", 96))
+        color_mode = self.config.get("led_color_mode", "single")
         with self._page_files_lock:
             pages = self._render_pages_for_types(
                 classes_by_type,
@@ -545,6 +547,7 @@ class LedService:
                 title=title,
                 width=width,
                 height=height,
+                color_mode=color_mode,
             )
             result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),
@@ -554,6 +557,7 @@ class LedService:
                 require_dismissal_active=True,
                 width=width,
                 height=height,
+                color_mode=color_mode,
             )
         if not result.ok:
             print(f"[LED] Push failed: {result.message}")
@@ -572,6 +576,7 @@ class LedService:
         show_title=None,
         club_rows_per_group=None,
         club_groups_per_page=None,
+        color_mode=None,
     ):
         width = int(width if width is not None else self.config.get("led_width", 1024))
         height = int(height if height is not None else self.config.get("led_height", 96))
@@ -605,6 +610,11 @@ class LedService:
             if show_title is None
             else bool(show_title)
         )
+        active_color_mode = (
+            color_mode
+            if color_mode is not None
+            else self.config.get("led_color_mode", "single")
+        )
         pages = []
         for class_type in (1, 2):
             classes = classes_by_type.get(class_type) or []
@@ -622,6 +632,7 @@ class LedService:
                     groups_per_page=club_groups,
                     show_title=title_visible,
                     filename_prefix="led-club-page",
+                    color_mode=active_color_mode,
                 )
             else:
                 rendered = render_led_pages(
@@ -636,6 +647,7 @@ class LedService:
                     show_title=title_visible,
                     class_type=1,
                     filename_prefix="led-page",
+                    color_mode=active_color_mode,
                 )
             pages.extend(rendered)
         return pages
@@ -652,6 +664,7 @@ class LedService:
         sample_statuses=False,
         club_rows_per_group=None,
         club_groups_per_page=None,
+        color_mode=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -664,9 +677,13 @@ class LedService:
             index = 0
             for class_type in (1, 2):
                 for item in classes_by_type[class_type]:
-                    statuses[self._status_key(item.get("class_id"), class_type)] = (
-                        self.STATUS_DISMISSING if index % 2 == 0 else self.STATUS_DISMISSED
-                    )
+                    sample = (
+                        self.STATUS_DISMISSING,
+                        self.STATUS_DISMISSED,
+                        "",
+                    )[index % 3]
+                    if sample:
+                        statuses[self._status_key(item.get("class_id"), class_type)] = sample
                     index += 1
         with self._page_files_lock:
             return self._render_pages_for_types(
@@ -681,6 +698,7 @@ class LedService:
                 show_title=show_title,
                 club_rows_per_group=club_rows_per_group,
                 club_groups_per_page=club_groups_per_page,
+                color_mode=color_mode,
             )
 
     def test_connection(self, ip=None, port=None):
@@ -800,6 +818,7 @@ class LedService:
         height=None,
         club_rows_per_group=None,
         club_groups_per_page=None,
+        color_mode=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -809,25 +828,35 @@ class LedService:
         if not any(classes_by_type.values()):
             classes_by_type[1] = [
                 {
-                    "class_id": "LED-TEST-1",
+                    "class_id": f"LED-TEST-{index}",
                     "class_type": 1,
                     "grade_name": "测试",
-                    "class_name": "测试一班",
-                    "class_show_name": "1班",
-                    "source_order": 0,
+                    "class_name": f"测试{index}班",
+                    "class_show_name": f"{index}班",
+                    "source_order": index - 1,
                 }
+                for index in range(1, 4)
             ]
         statuses = {}
         index = 0
         for class_type in (1, 2):
             for item in classes_by_type[class_type]:
-                statuses[self._status_key(item.get("class_id"), class_type)] = (
-                    self.STATUS_DISMISSING if index % 2 == 0 else self.STATUS_DISMISSED
-                )
+                sample = (
+                    self.STATUS_DISMISSING,
+                    self.STATUS_DISMISSED,
+                    "",
+                )[index % 3]
+                if sample:
+                    statuses[self._status_key(item.get("class_id"), class_type)] = sample
                 index += 1
 
         width = int(width if width is not None else self.config.get("led_width", 1024))
         height = int(height if height is not None else self.config.get("led_height", 96))
+        active_color_mode = (
+            color_mode
+            if color_mode is not None
+            else self.config.get("led_color_mode", "single")
+        )
 
         with self._page_files_lock:
             pages = self._render_pages_for_types(
@@ -842,6 +871,7 @@ class LedService:
                 show_title=show_title,
                 club_rows_per_group=club_rows_per_group,
                 club_groups_per_page=club_groups_per_page,
+                color_mode=active_color_mode,
             )
             result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),
@@ -850,6 +880,7 @@ class LedService:
                 float(stay_seconds or self.config.get("led_page_seconds", 5)),
                 width=width,
                 height=height,
+                color_mode=active_color_mode,
             )
         self._record_operation(
             "LED 屏",
@@ -872,6 +903,7 @@ class LedService:
         require_dismissal_active=False,
         width=1024,
         height=96,
+        color_mode="single",
     ):
         pages = list(pages)
         if not pages:
@@ -886,6 +918,7 @@ class LedService:
             self._display_index = 0
             self._display_target = (ip, int(port))
             self._display_dimensions = (int(width), int(height))
+            self._display_color_mode = color_mode
             self._display_interval = max(1.0, float(stay_seconds))
             first_page = pages[0]
         with self._operation_lock:
@@ -907,6 +940,7 @@ class LedService:
                 stay_seconds=interval,
                 width=int(width),
                 height=int(height),
+                color_mode=color_mode,
             )
         if result.ok:
             self._schedule_display_rotation(generation)
@@ -959,6 +993,7 @@ class LedService:
             ip, port = self._display_target
             width, height = self._display_dimensions
             interval = self._display_interval
+            color_mode = self._display_color_mode
         with self._page_files_lock:
             with self._operation_lock:
                 with self._lock:
@@ -972,6 +1007,7 @@ class LedService:
                     stay_seconds=interval,
                     width=width,
                     height=height,
+                    color_mode=color_mode,
                 )
         if not result.ok:
             self._log_failed_result("翻页", result)

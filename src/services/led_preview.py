@@ -40,8 +40,10 @@ PREVIEW_BACKGROUND = (5, 0, 0)
 PREVIEW_LED_RED = (255, 48, 32)
 
 
-def colorize_led_preview(source_path):
+def colorize_led_preview(source_path, color_mode="single"):
     with Image.open(source_path) as source:
+        if str(color_mode or "").strip().lower() == "double":
+            return source.convert("RGB")
         grayscale = source.convert("L")
         return ImageOps.colorize(
             grayscale,

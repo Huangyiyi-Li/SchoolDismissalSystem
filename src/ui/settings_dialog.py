@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QMessageBox, QFormLayout,
                              QCheckBox, QPlainTextEdit, QGroupBox, QWidget,
-                             QScrollArea, QFrame)
+                             QScrollArea, QFrame, QComboBox)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from ..services.device_identity import format_device_no_from_node, normalize_device_no
@@ -42,6 +42,7 @@ class SettingsDialog(QDialog):
         self._preview_source_pixmap = None
         self._preview_zoom_percent = 100
         self._preview_fit_to_window = False
+        self._preview_color_mode = "single"
         self._led_validation_message = ""
         self._preview_state = PreviewRefreshState()
         self.led_action_finished.connect(self._show_led_result)
@@ -107,6 +108,22 @@ class SettingsDialog(QDialog):
         )
         led_form.addRow("控制卡端口:", self.led_port_edit)
 
+        self.led_color_mode_combo = QComboBox()
+        self.led_color_mode_combo.addItem("单色", "single")
+        self.led_color_mode_combo.addItem("双色", "double")
+        saved_color_mode = self.config.get("led_color_mode", "single")
+        saved_color_index = self.led_color_mode_combo.findData(saved_color_mode)
+        self.led_color_mode_combo.setCurrentIndex(max(0, saved_color_index))
+        led_form.addRow("屏幕颜色:", self.led_color_mode_combo)
+        self.led_color_hint = QLabel()
+        self.led_color_hint.setWordWrap(True)
+        self.led_color_hint.setStyleSheet("color:#6b7280;font-size:12px;")
+        led_form.addRow("", self.led_color_hint)
+        self.led_color_mode_combo.currentIndexChanged.connect(
+            self._update_led_color_hint
+        )
+        self._update_led_color_hint()
+
         size_layout = QHBoxLayout()
         self.led_width_edit = QLineEdit(str(self.config.get("led_width", 1024)))
         self.led_width_edit.setPlaceholderText("宽，如 1024")
@@ -116,13 +133,11 @@ class SettingsDialog(QDialog):
         size_layout.addWidget(QLabel("×"))
         size_layout.addWidget(self.led_height_edit)
         led_form.addRow("像素尺寸:", size_layout)
-        size_hint = QLabel(
-            "填写施工方确认的实际像素：宽≤2048，高≤1024，总像素≤524288。"
-            "只支持正整数，不强制 8/16/32 倍数；必须与控制卡配置完全一致。"
-        )
-        size_hint.setWordWrap(True)
-        size_hint.setStyleSheet("color:#6b7280;font-size:12px;")
-        led_form.addRow("", size_hint)
+        self.led_size_hint = QLabel()
+        self.led_size_hint.setWordWrap(True)
+        self.led_size_hint.setStyleSheet("color:#6b7280;font-size:12px;")
+        led_form.addRow("", self.led_size_hint)
+        self._update_led_size_hint()
 
         self.led_page_seconds_edit = QLineEdit(
             str(self.config.get("led_page_seconds", 5))
@@ -298,6 +313,9 @@ class SettingsDialog(QDialog):
             else:
                 editor.textChanged.connect(self.mark_led_preview_stale)
         self.led_show_title_check.toggled.connect(self.mark_led_preview_stale)
+        self.led_color_mode_combo.currentIndexChanged.connect(
+            self.mark_led_preview_stale
+        )
         self._update_preview_buttons()
 
     def save_settings(self):
@@ -326,10 +344,13 @@ class SettingsDialog(QDialog):
         old_led_enabled = bool(self.config.get("led_enabled", False))
         old_led_ip = self.config.get("led_controller_ip", "192.168.100.1")
         old_led_port = int(self.config.get("led_controller_port", 5005))
+        old_led_color_mode = self.config.get("led_color_mode", "single")
         school_id_changed = new_school_id != old_school_id
         api_base_url_changed = (api_base_url or "https://rest.xxt.cn") != old_api_base_url
         led_target_changed = (
-            led_values["ip"] != old_led_ip or led_values["port"] != old_led_port
+            led_values["ip"] != old_led_ip
+            or led_values["port"] != old_led_port
+            or led_values["color_mode"] != old_led_color_mode
         )
         new_led_enabled = self.led_enabled_check.isChecked()
 
@@ -343,6 +364,7 @@ class SettingsDialog(QDialog):
         self.config.set("led_controller_port", led_values["port"])
         self.config.set("led_width", led_values["width"])
         self.config.set("led_height", led_values["height"])
+        self.config.set("led_color_mode", led_values["color_mode"])
         self.config.set("led_page_seconds", led_values["page_seconds"])
         self.config.set("led_grades_per_page", led_values["grades_per_page"])
         self.config.set("led_layout_regions", led_values["regions_per_page"])
@@ -441,6 +463,7 @@ class SettingsDialog(QDialog):
         dimensions = validate_led_dimensions(
             self.led_width_edit.text(),
             self.led_height_edit.text(),
+            self.led_color_mode_combo.currentData(),
         )
         if not dimensions.ok:
             return fail(dimensions.message)
@@ -490,6 +513,7 @@ class SettingsDialog(QDialog):
             "port": port,
             "width": width,
             "height": height,
+            "color_mode": self.led_color_mode_combo.currentData() or "single",
             "page_seconds": page_seconds,
             "grades_per_page": grades_per_page,
             "regions_per_page": regions_per_page,
@@ -500,6 +524,31 @@ class SettingsDialog(QDialog):
             "title": title,
         }
 
+    def _update_led_color_hint(self, *_args):
+        if self.led_color_mode_combo.currentData() == "double":
+            self.led_color_hint.setText(
+                "双色状态：未放学=黄、放学中=红、已放学=绿；表格、标题和班级名保持红色。"
+                "必须与控制卡屏参中的双色配置一致。"
+            )
+        else:
+            self.led_color_hint.setText(
+                "单色状态：未放学为空、刷卡后显示“放学中/已放学”。"
+                "必须与控制卡屏参中的单色配置一致。"
+            )
+        self._update_led_size_hint()
+
+    def _update_led_size_hint(self):
+        if not hasattr(self, "led_size_hint"):
+            return
+        pixel_limit = (
+            "262144（256K）"
+            if self.led_color_mode_combo.currentData() == "double"
+            else "524288（512K）"
+        )
+        self.led_size_hint.setText(
+            f"填写施工方确认的实际像素：宽≤2048，高≤1024，总像素≤{pixel_limit}。"
+            "只支持正整数，不强制 8/16/32 倍数；必须与控制卡配置完全一致。"
+        )
     def mark_led_preview_stale(self, *_args):
         self._preview_state.mark_dirty()
         self.preview_generate_btn.setText(self._preview_state.button_label)
@@ -551,6 +600,7 @@ class SettingsDialog(QDialog):
                     sample_statuses=sample_statuses,
                     club_rows_per_group=request_values["club_rows_per_group"],
                     club_groups_per_page=request_values["club_groups_per_page"],
+                    color_mode=request_values["color_mode"],
                 )
                 payload = {
                     "revision": request_revision,
@@ -586,6 +636,7 @@ class SettingsDialog(QDialog):
             self._update_preview_buttons()
             return
         values = payload["values"]
+        self._preview_color_mode = values["color_mode"]
         self._preview_pages = payload["pages"]
         try:
             self._preview_index = min(
@@ -598,11 +649,16 @@ class SettingsDialog(QDialog):
             self._show_preview_message("暂无可预览的班级")
             self.preview_status_label.setText("请先绑定学校并同步行政班或社团班数据。")
         else:
+            color_summary = (
+                "双色模拟：未放学黄 / 放学中红 / 已放学绿"
+                if values["color_mode"] == "double"
+                else "单色模拟：黑底红字，未放学为空"
+            )
             self.preview_status_label.setText(
                 f"{values['width']}×{values['height']} 像素 · "
                 f"行政班 {values['regions_per_page']} 区×{values['grades_per_page']} 行 · "
                 f"社团班 {values['club_groups_per_page']} 组×{values['club_rows_per_group']} 行 · "
-                "黑底红字为单色 LED 模拟效果"
+                f"{color_summary}"
             )
             self._show_preview_page()
             if stale:
@@ -616,7 +672,8 @@ class SettingsDialog(QDialog):
             return
         try:
             preview_image = colorize_led_preview(
-                self._preview_pages[self._preview_index]
+                self._preview_pages[self._preview_index],
+                color_mode=self._preview_color_mode,
             )
             image_bytes = BytesIO()
             preview_image.save(image_bytes, format="PNG")
@@ -755,6 +812,7 @@ class SettingsDialog(QDialog):
                 height=values["height"],
                 club_rows_per_group=values["club_rows_per_group"],
                 club_groups_per_page=values["club_groups_per_page"],
+                color_mode=values["color_mode"],
             )
         )
 

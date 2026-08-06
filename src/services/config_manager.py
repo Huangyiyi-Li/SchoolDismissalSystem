@@ -23,6 +23,7 @@ class ConfigManager:
         "led_controller_port": 5005,
         "led_width": 1024,
         "led_height": 96,
+        "led_color_mode": "single",
         "led_page_seconds": 5,
         "led_grades_per_page": 2,
         "led_layout_regions": 1,

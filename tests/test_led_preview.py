@@ -24,6 +24,20 @@ class LedPreviewTests(unittest.TestCase):
         self.assertEqual(scaled_preview_size(1024, 96, 100), (1024, 96))
         self.assertEqual(scaled_preview_size(1024, 96, 200), (2048, 192))
 
+    def test_dual_color_preview_preserves_red_yellow_and_green_pixels(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "dual.bmp"
+            image = Image.new("RGB", (3, 1))
+            image.putdata([(255, 0, 0), (255, 255, 0), (0, 255, 0)])
+            image.save(source)
+
+            preview = colorize_led_preview(source, color_mode="double")
+
+            self.assertEqual(
+                list(preview.getdata()),
+                [(255, 0, 0), (255, 255, 0), (0, 255, 0)],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

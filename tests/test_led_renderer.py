@@ -5,8 +5,12 @@ from pathlib import Path
 from PIL import Image
 
 from src.services.led_renderer import (
+    LED_GREEN,
+    LED_RED,
+    LED_YELLOW,
     build_led_page_layout,
     calculate_club_column_widths,
+    display_status,
     render_club_led_pages,
     render_led_pages,
     split_club_name,
@@ -25,6 +29,34 @@ def make_class(class_id, grade_name, source_order):
 
 
 class LedRendererTests(unittest.TestCase):
+    def test_status_copy_depends_on_configured_screen_color(self):
+        self.assertEqual(display_status("", "single"), "")
+        self.assertEqual(display_status("", "double"), "未放学")
+        self.assertEqual(display_status("放学中", "double"), "放学中")
+        self.assertEqual(display_status("已放学", "double"), "已放学")
+
+    def test_dual_color_page_contains_all_three_status_colors(self):
+        classes = [
+            make_class("101", "一年级", 0),
+            make_class("102", "一年级", 1),
+            make_class("103", "一年级", 2),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pages = render_led_pages(
+                "健康路小学",
+                classes,
+                {"102": "放学中", "103": "已放学"},
+                Path(tmpdir),
+                color_mode="double",
+            )
+
+            with Image.open(pages[0]) as image:
+                self.assertEqual(image.mode, "RGB")
+                colors = {color for _count, color in image.getcolors(maxcolors=1000000)}
+                self.assertIn(LED_RED, colors)
+                self.assertIn(LED_YELLOW, colors)
+                self.assertIn(LED_GREEN, colors)
+
     def test_layout_uses_global_maximum_without_fabricating_classes(self):
         classes = [
             make_class("101", "一年级", 0),

@@ -102,7 +102,16 @@ class JavaLedBridge:
     def ping(self, ip, port):
         return self._run(["ping", "--ip", ip, "--port", int(port)])
 
-    def display(self, ip, port, image_paths, stay_seconds=5, width=1024, height=96):
+    def display(
+        self,
+        ip,
+        port,
+        image_paths,
+        stay_seconds=5,
+        width=1024,
+        height=96,
+        color_mode="single",
+    ):
         paths = [str(Path(path).resolve()) for path in image_paths]
         if not paths:
             return BridgeResult(False, "没有可发送的 LED 页面")
@@ -111,6 +120,7 @@ class JavaLedBridge:
             [
                 "display", "--ip", ip, "--port", int(port),
                 "--width", int(width), "--height", int(height),
+                "--color", color_mode,
                 "--stay", stay_units, "--images",
             ] + paths,
             timeout=self.display_timeout_seconds,

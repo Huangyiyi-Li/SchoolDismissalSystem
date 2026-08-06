@@ -22,6 +22,7 @@ class FakeConfig:
             "led_controller_port": 5005,
             "led_width": 1024,
             "led_height": 96,
+            "led_color_mode": "single",
             "led_page_seconds": 5,
             "led_grades_per_page": 2,
             "led_layout_regions": 1,
@@ -86,6 +87,20 @@ class SettingsPreviewTests(unittest.TestCase):
         kwargs = service.preview_calls[0][1]
         self.assertEqual(kwargs["club_rows_per_group"], 4)
         self.assertEqual(kwargs["club_groups_per_page"], 5)
+        self.assertEqual(kwargs["color_mode"], "single")
+
+    def test_dual_color_selection_updates_guidance_and_preview_request(self):
+        dialog, service = self.make_dialog()
+        dialog.led_color_mode_combo.setCurrentIndex(
+            dialog.led_color_mode_combo.findData("double")
+        )
+
+        self.assertIn("未放学=黄", dialog.led_color_hint.text())
+        self.assertIn("256K", dialog.led_size_hint.text())
+        dialog.preview_generate_btn.click()
+
+        self.assertTrue(self.wait_until(lambda: len(service.preview_calls) == 1))
+        self.assertEqual(service.preview_calls[0][1]["color_mode"], "double")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import java.util.List;
 import onbon.bx06.Bx6GEnv;
 import onbon.bx06.Bx6GScreen;
 import onbon.bx06.Bx6GScreenClient;
+import onbon.bx06.Bx6GScreenProfile.ScreenColorType;
 import onbon.bx06.area.DynamicBxArea;
 import onbon.bx06.area.page.ImageFileBxPage;
 import onbon.bx06.cmd.dyn.DynamicBxAreaRule;
@@ -42,6 +43,7 @@ public final class OnbonLedBridge {
                 requireOk(result, "控制卡连接测试失败");
                 ok("已连接 BX-6E 控制卡 " + options.ip + ":" + options.port);
             } else if ("display".equals(options.command)) {
+                validateColorMode(screen, options);
                 writeImages(screen, options);
                 ok("已发送 " + options.images.size() + " 个 LED 页面");
             } else if ("clear".equals(options.command)) {
@@ -97,6 +99,24 @@ public final class OnbonLedBridge {
         requireOk(result, "发送动态区失败");
     }
 
+    private static void validateColorMode(Bx6GScreenClient screen, Arguments options) {
+        ScreenColorType actual = screen.getProfile().getColorType();
+        ScreenColorType expected = "double".equals(options.color)
+            ? ScreenColorType.DOUBLE
+            : ScreenColorType.SINGLE;
+        if (actual != expected) {
+            String expectedName = expected == ScreenColorType.DOUBLE ? "双色" : "单色";
+            String actualName = actual == ScreenColorType.DOUBLE
+                ? "双色"
+                : (actual == ScreenColorType.SINGLE ? "单色" : String.valueOf(actual));
+            throw new IllegalStateException(
+                "屏幕颜色配置不一致：软件选择" + expectedName
+                + "，控制卡报告" + actualName
+                + "。请在软件或控制卡屏参中改为一致后重试"
+            );
+        }
+    }
+
     private static void requireOk(Bx6GScreen.Result<?> result, String message) {
         if (result == null || !result.isOK()) {
             String error = result == null ? "无返回结果" : String.valueOf(result.getError());
@@ -126,6 +146,7 @@ public final class OnbonLedBridge {
         private int width = 1024;
         private int height = 96;
         private int stay = 500;
+        private String color = "single";
         private final List<String> images = new ArrayList<String>();
 
         private static Arguments parse(String[] args) {
@@ -146,6 +167,8 @@ public final class OnbonLedBridge {
                     parsed.width = Integer.parseInt(requireValue(args, ++index, "--width"));
                 } else if ("--height".equals(value)) {
                     parsed.height = Integer.parseInt(requireValue(args, ++index, "--height"));
+                } else if ("--color".equals(value)) {
+                    parsed.color = requireValue(args, ++index, "--color").toLowerCase();
                 } else if ("--images".equals(value)) {
                     for (index = index + 1; index < args.length; index++) {
                         parsed.images.add(args[index]);
@@ -164,14 +187,21 @@ public final class OnbonLedBridge {
             if (parsed.width < 1 || parsed.height < 1) {
                 throw new IllegalArgumentException("LED 像素尺寸必须大于 0");
             }
+            if (!"single".equals(parsed.color) && !"double".equals(parsed.color)) {
+                throw new IllegalArgumentException("屏幕颜色只支持 single 或 double");
+            }
             if (parsed.width > 2048) {
-                throw new IllegalArgumentException("BX-6E1XP 单色屏宽度不能超过 2048 像素");
+                throw new IllegalArgumentException("BX-6E1XP 屏幕宽度不能超过 2048 像素");
             }
             if (parsed.height > 1024) {
                 throw new IllegalArgumentException("BX-6E1XP 屏幕高度不能超过 1024 像素");
             }
-            if ((long) parsed.width * parsed.height > 524288L) {
-                throw new IllegalArgumentException("BX-6E1XP 单色屏总像素不能超过 524288");
+            long maxPixels = "double".equals(parsed.color) ? 262144L : 524288L;
+            if ((long) parsed.width * parsed.height > maxPixels) {
+                throw new IllegalArgumentException(
+                    "BX-6E1XP " + ("double".equals(parsed.color) ? "双色" : "单色")
+                    + "屏总像素不能超过 " + maxPixels
+                );
             }
             if ("display".equals(parsed.command) && parsed.images.isEmpty()) {
                 throw new IllegalArgumentException("缺少 --images");

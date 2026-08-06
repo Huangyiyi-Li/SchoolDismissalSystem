@@ -20,11 +20,12 @@ java -Djava.awt.headless=true -cp "led-bridge.jar;lib/*" cn.xxt.dismissal.led.On
 推送由 Python 客户端生成的图片：
 
 ```bat
-java -Djava.awt.headless=true -cp "led-bridge.jar;lib/*" cn.xxt.dismissal.led.OnbonLedBridge display --ip 192.168.100.1 --port 5005 --width 1024 --height 96 --stay 500 --images page-01.bmp page-02.bmp
+java -Djava.awt.headless=true -cp "led-bridge.jar;lib/*" cn.xxt.dismissal.led.OnbonLedBridge display --ip 192.168.100.1 --port 5005 --width 1024 --height 96 --color double --stay 500 --images page-01.bmp page-02.bmp
 ```
 
 `--stay` 的单位是 10ms，`500` 即 5 秒。
 `--width`、`--height` 使用实际屏幕像素，不强制为 8/16/32 的倍数，但必须与控制卡屏参完全一致。
+`--color` 使用 `single` 或 `double`，Bridge 会与控制卡读取到的屏幕颜色类型进行校验；不一致时拒绝发送。
 
 正式 Windows 构建会在 `runtime` 目录附带 Java 8 运行时，客户端会优先使用它；
 直接从源码运行且没有该目录时，系统会使用 PATH 中的 `java`。

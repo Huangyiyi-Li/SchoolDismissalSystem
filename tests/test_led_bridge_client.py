@@ -42,12 +42,14 @@ class LedBridgeClientTests(unittest.TestCase):
                 stay_seconds=7,
                 width=640,
                 height=80,
+                color_mode="double",
             )
 
         self.assertTrue(result.ok)
         self.assertIn("700", calls[0])
         self.assertIn("640", calls[0])
         self.assertIn("80", calls[0])
+        self.assertEqual(calls[0][calls[0].index("--color") + 1], "double")
         self.assertLess(calls[0].index("--width"), calls[0].index("--images"))
         self.assertEqual(calls[0][-2:], [str(page.resolve()) for page in pages])
 

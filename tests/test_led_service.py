@@ -44,9 +44,19 @@ class FakeBridge:
     def ping(self, ip, port):
         return BridgeResult(True, f"{ip}:{port}")
 
-    def display(self, ip, port, pages, stay_seconds, width=1024, height=96):
+    def display(
+        self,
+        ip,
+        port,
+        pages,
+        stay_seconds,
+        width=1024,
+        height=96,
+        color_mode="single",
+    ):
         self.displays.append((ip, port, list(pages), stay_seconds))
         self.display_dimensions.append((width, height))
+        self.last_color_mode = color_mode
         self.operations.append(("display", ip, port))
         if self.display_results:
             return self.display_results.pop(0)
@@ -99,6 +109,24 @@ class FakeOperationLogger:
 
 
 class LedServiceTests(unittest.TestCase):
+    def test_dual_color_setting_reaches_bridge_and_renders_rgb_page(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge = FakeBridge()
+            service = LedService(
+                FakeConfig({"school_id": "40125", "led_color_mode": "double"}),
+                self.make_db(tmpdir),
+                bridge=bridge,
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+
+            result = service.refresh()
+
+            self.assertTrue(result.ok)
+            self.assertEqual(bridge.last_color_mode, "double")
+            with Image.open(bridge.displays[0][2][0]) as image:
+                self.assertEqual(image.mode, "RGB")
+
     def make_db(self, tmpdir):
         db = DatabaseManager(os.path.join(tmpdir, "school.db"))
         db.upsert_led_class("40125", 1, "101", "一年级", "一年级一班", source_order=0)
@@ -871,7 +899,10 @@ class LedServiceTests(unittest.TestCase):
                     self.entered = threading.Event()
                     self.release = threading.Event()
 
-                def display(self, ip, port, pages, stay_seconds, width=1024, height=96):
+                def display(
+                    self, ip, port, pages, stay_seconds, width=1024, height=96,
+                    color_mode="single",
+                ):
                     self.call_count += 1
                     if self.call_count == 2:
                         self.in_display = True
@@ -1052,7 +1083,10 @@ class LedServiceTests(unittest.TestCase):
     def test_refresh_exception_is_available_in_local_operation_log(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             class ExplodingBridge(FakeBridge):
-                def display(self, ip, port, pages, stay_seconds, width=1024, height=96):
+                def display(
+                    self, ip, port, pages, stay_seconds, width=1024, height=96,
+                    color_mode="single",
+                ):
                     raise RuntimeError("bridge process failed")
 
             operation_logger = FakeOperationLogger()

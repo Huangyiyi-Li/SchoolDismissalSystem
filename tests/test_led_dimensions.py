@@ -34,6 +34,13 @@ class LedDimensionTests(unittest.TestCase):
             "BX-6E1XP 单色屏总像素不能超过 524288（512K）",
         )
 
+    def test_dual_color_uses_official_256k_pixel_limit(self):
+        self.assertTrue(validate_led_dimensions("1024", "96", "double").ok)
+        self.assertEqual(
+            validate_led_dimensions("1024", "300", "double").message,
+            "BX-6E1XP 双色屏总像素不能超过 262144（256K）",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
