@@ -406,6 +406,46 @@ class LedServiceTests(unittest.TestCase):
             self.assertIn("led-page-01.bmp", page_names)
             self.assertIn("led-club-page-01.bmp", page_names)
 
+    def test_club_pages_use_independent_group_and_row_configuration(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            for index in range(50):
+                db.upsert_led_class(
+                    "40125",
+                    2,
+                    str(200 + index),
+                    "",
+                    f"社团{index + 1}",
+                    class_show_name=f"社团{index + 1}",
+                    source_order=index,
+                )
+            bridge = FakeBridge()
+            service = LedService(
+                FakeConfig(
+                    {
+                        "school_id": "40125",
+                        "led_grades_per_page": 2,
+                        "led_layout_regions": 1,
+                        "led_club_rows_per_group": 4,
+                        "led_club_groups_per_page": 5,
+                    }
+                ),
+                db,
+                bridge=bridge,
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+            service.set_dismissal_active(True, class_types={2})
+
+            result = service.refresh()
+
+            self.assertTrue(result.ok)
+            club_pages = [
+                path for path in service._display_pages
+                if path.name.startswith("led-club-page-")
+            ]
+            self.assertEqual(len(club_pages), 3)
+
     def test_dismissed_status_survives_service_restart_on_same_day(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = self.make_db(tmpdir)

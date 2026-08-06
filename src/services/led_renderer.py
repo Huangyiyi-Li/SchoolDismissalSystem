@@ -136,6 +136,110 @@ def _draw_centered(draw, box, text, preferred=20):
     draw.text((x, y), text, font=font, fill=1)
 
 
+def split_club_name(text):
+    text = str(text or "").strip()
+    if len(text) <= 1:
+        return [text] if text else []
+    split_at = (len(text) + 1) // 2
+    return [text[:split_at], text[split_at:]]
+
+
+def calculate_club_column_widths(group_width):
+    group_width = max(2, int(group_width))
+    status_width = max(28, round(group_width * 0.42))
+    status_width = min(group_width - 1, status_width)
+    return group_width - status_width, status_width
+
+
+def _line_metrics(draw, lines, font):
+    widths = []
+    heights = []
+    for line in lines:
+        bounds = draw.textbbox((0, 0), line, font=font)
+        widths.append(bounds[2] - bounds[0])
+        heights.append(bounds[3] - bounds[1])
+    return widths, heights
+
+
+def _draw_centered_lines(draw, box, lines, font):
+    x1, y1, x2, y2 = box
+    widths, heights = _line_metrics(draw, lines, font)
+    gap = 1 if len(lines) > 1 else 0
+    total_height = sum(heights) + gap * (len(lines) - 1)
+    cursor_y = y1 + ((y2 - y1) - total_height) / 2
+    for line, width, height in zip(lines, widths, heights):
+        bounds = draw.textbbox((0, 0), line, font=font)
+        x = x1 + ((x2 - x1) - width) / 2 - bounds[0]
+        y = cursor_y - bounds[1]
+        draw.text((x, y), line, font=font, fill=1)
+        cursor_y += height + gap
+
+
+def _truncate_to_width(draw, text, font, max_width):
+    suffix = "…"
+    suffix_bounds = draw.textbbox((0, 0), suffix, font=font)
+    if suffix_bounds[2] - suffix_bounds[0] > max_width:
+        return ""
+    candidate = str(text or "")
+    while candidate:
+        shown = candidate + suffix
+        bounds = draw.textbbox((0, 0), shown, font=font)
+        if bounds[2] - bounds[0] <= max_width:
+            return shown
+        candidate = candidate[:-1]
+    return suffix
+
+
+def _draw_centered_single_line(draw, box, text, preferred=12, minimum=8):
+    text = str(text or "").strip()
+    if not text:
+        return
+    x1, y1, x2, y2 = box
+    max_width = max(1, x2 - x1 - 4)
+    max_height = max(1, y2 - y1 - 2)
+    font = _fit_font(
+        draw,
+        text,
+        max_width,
+        max_height,
+        preferred=preferred,
+        minimum=minimum,
+    )
+    bounds = draw.textbbox((0, 0), text, font=font)
+    if bounds[2] - bounds[0] > max_width:
+        text = _truncate_to_width(draw, text, font, max_width)
+    _draw_centered_lines(draw, box, [text], font)
+
+
+def _draw_centered_club_name(draw, box, text, preferred=16, minimum=8):
+    text = str(text or "").strip()
+    if not text:
+        return
+    x1, y1, x2, y2 = box
+    max_width = max(1, x2 - x1 - 4)
+    max_height = max(1, y2 - y1 - 2)
+
+    for size in range(preferred, max(10, minimum) - 1, -1):
+        font = _load_font(size)
+        widths, heights = _line_metrics(draw, [text], font)
+        if widths[0] <= max_width and heights[0] <= max_height:
+            _draw_centered_lines(draw, box, [text], font)
+            return
+
+    wrapped = split_club_name(text)
+    if len(wrapped) == 2:
+        for size in range(preferred, minimum - 1, -1):
+            font = _load_font(size)
+            widths, heights = _line_metrics(draw, wrapped, font)
+            if max(widths) <= max_width and sum(heights) + 1 <= max_height:
+                _draw_centered_lines(draw, box, wrapped, font)
+                return
+
+    font = _load_font(minimum)
+    shown = _truncate_to_width(draw, text, font, max_width)
+    _draw_centered_lines(draw, box, [shown], font)
+
+
 def _draw_title(draw, title, box):
     lines = [line.strip() for line in str(title or "").splitlines() if line.strip()]
     if not lines:
@@ -260,4 +364,95 @@ def render_led_pages(
         image.save(path, format="BMP")
         paths.append(path)
 
+    return paths
+
+
+def render_club_led_pages(
+    school_title,
+    classes,
+    statuses,
+    output_dir,
+    width=1024,
+    height=96,
+    rows_per_group=4,
+    groups_per_page=5,
+    show_title=True,
+    filename_prefix="led-club-page",
+):
+    row_count = max(1, int(rows_per_group))
+    group_count = max(1, int(groups_per_page))
+    layout = build_led_page_layout(
+        classes,
+        grades_per_page=row_count,
+        regions_per_page=group_count,
+        class_type=2,
+    )
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for stale in output_dir.glob(f"{filename_prefix}-*.bmp"):
+        stale.unlink()
+    if not layout.pages:
+        return []
+
+    title_width = min(170, max(1, width // 7)) if show_title else 0
+    content_width = width - title_width
+    group_width = content_width / group_count
+    header_height = max(1, height // (row_count + 1))
+    paths = []
+
+    for page_index, page in enumerate(layout.pages, start=1):
+        image = Image.new("1", (width, height), 0)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, width - 1, height - 1), outline=1)
+        if show_title:
+            draw.line((title_width, 0, title_width, height), fill=1)
+            _draw_title(draw, school_title, (0, 0, title_width, height))
+
+        for group_index in range(group_count):
+            rows = page.regions[group_index] if group_index < len(page.regions) else []
+            group_x1 = round(title_width + group_width * group_index)
+            group_x2 = round(title_width + group_width * (group_index + 1))
+            if group_index:
+                draw.line((group_x1, 0, group_x1, height), fill=1)
+            actual_group_width = max(2, group_x2 - group_x1)
+            name_width, _ = calculate_club_column_widths(actual_group_width)
+            status_x1 = group_x1 + name_width
+            draw.line((status_x1, 0, status_x1, height), fill=1)
+            draw.line((group_x1, header_height, group_x2, header_height), fill=1)
+            for row_index in range(1, row_count):
+                y = header_height * (row_index + 1)
+                draw.line((group_x1, y, group_x2, y), fill=1)
+
+            _draw_centered(
+                draw,
+                (group_x1, 0, status_x1, header_height),
+                "社团名",
+                preferred=14,
+            )
+            _draw_centered_single_line(
+                draw,
+                (status_x1, 0, group_x2, header_height),
+                "状态",
+                preferred=14,
+            )
+
+            for row_index, row in enumerate(rows):
+                y1 = header_height * (row_index + 1)
+                y2 = header_height * (row_index + 2) if row_index < row_count - 1 else height
+                item = row.classes[0]
+                _draw_centered_club_name(
+                    draw,
+                    (group_x1, y1, status_x1, y2),
+                    row.grade_name,
+                )
+                _draw_centered_single_line(
+                    draw,
+                    (status_x1, y1, group_x2, y2),
+                    _status_for(statuses, item),
+                    preferred=12,
+                )
+
+        path = output_dir / f"{filename_prefix}-{page_index:02d}.bmp"
+        image.save(path, format="BMP")
+        paths.append(path)
     return paths

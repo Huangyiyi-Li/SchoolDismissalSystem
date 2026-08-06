@@ -2,11 +2,15 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QMessageBox, QFormLayout,
                              QCheckBox, QPlainTextEdit, QGroupBox, QWidget,
                              QScrollArea, QFrame)
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from ..services.device_identity import format_device_no_from_node, normalize_device_no
 from ..services.led_dimensions import validate_led_dimensions
-from ..services.led_preview import colorize_led_preview, scaled_preview_size
+from ..services.led_preview import (
+    PreviewRefreshState,
+    colorize_led_preview,
+    scaled_preview_size,
+)
 from ..utils.path_utils import get_app_root
 import ipaddress
 import threading
@@ -16,6 +20,7 @@ from pathlib import Path
 
 class SettingsDialog(QDialog):
     led_action_finished = pyqtSignal(bool, str)
+    preview_finished = pyqtSignal(object)
 
     def __init__(
         self,
@@ -38,11 +43,9 @@ class SettingsDialog(QDialog):
         self._preview_zoom_percent = 100
         self._preview_fit_to_window = False
         self._led_validation_message = ""
-        self._preview_timer = QTimer(self)
-        self._preview_timer.setSingleShot(True)
-        self._preview_timer.setInterval(250)
-        self._preview_timer.timeout.connect(self.refresh_led_preview)
+        self._preview_state = PreviewRefreshState()
         self.led_action_finished.connect(self._show_led_result)
+        self.preview_finished.connect(self._handle_preview_finished)
         self.setup_ui()
 
     def setup_ui(self):
@@ -130,14 +133,32 @@ class SettingsDialog(QDialog):
         self.led_grades_per_page_edit = QLineEdit(
             str(self.config.get("led_grades_per_page", 2))
         )
-        self.led_grades_per_page_edit.setPlaceholderText("每个横向分区显示 1-6 行")
-        led_form.addRow("每区行数:", self.led_grades_per_page_edit)
+        self.led_grades_per_page_edit.setPlaceholderText("行政班每区显示 1-6 个年级")
+        led_form.addRow("行政班每区行数:", self.led_grades_per_page_edit)
 
         self.led_layout_regions_edit = QLineEdit(
             str(self.config.get("led_layout_regions", 1))
         )
-        self.led_layout_regions_edit.setPlaceholderText("横向分区数 1-6")
-        led_form.addRow("横向分区数:", self.led_layout_regions_edit)
+        self.led_layout_regions_edit.setPlaceholderText("行政班横向分区数 1-6")
+        led_form.addRow("行政班横向分区:", self.led_layout_regions_edit)
+
+        self.led_club_rows_edit = QLineEdit(
+            str(self.config.get("led_club_rows_per_group", 4))
+        )
+        self.led_club_rows_edit.setPlaceholderText("每组显示 1-6 个社团")
+        led_form.addRow("社团班每组行数:", self.led_club_rows_edit)
+
+        self.led_club_groups_edit = QLineEdit(
+            str(self.config.get("led_club_groups_per_page", 5))
+        )
+        self.led_club_groups_edit.setPlaceholderText("每页横向组数 1-6")
+        led_form.addRow("社团班横向组数:", self.led_club_groups_edit)
+        club_layout_hint = QLabel(
+            "社团班每页容量 = 横向组数 × 每组行数；状态固定单行，长名称自动缩小并最多分两行。"
+        )
+        club_layout_hint.setWordWrap(True)
+        club_layout_hint.setStyleSheet("color:#6b7280;font-size:12px;")
+        led_form.addRow("", club_layout_hint)
 
         self.led_dismissed_delay_edit = QLineEdit(
             str(self.config.get("led_dismissed_delay_seconds", 5))
@@ -197,7 +218,7 @@ class SettingsDialog(QDialog):
 
         preview_group = QGroupBox("LED 内容预览（本地预览，不会发送到控制卡）")
         preview_layout = QVBoxLayout(preview_group)
-        self.preview_label = QLabel("正在生成预览…")
+        self.preview_label = QLabel("点击“生成预览”查看当前参数效果")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.resize(560, 260)
         self.preview_label.setStyleSheet(
@@ -219,6 +240,9 @@ class SettingsDialog(QDialog):
         preview_layout.addWidget(self.preview_status_label)
 
         preview_controls = QHBoxLayout()
+        self.preview_generate_btn = QPushButton("生成预览")
+        self.preview_generate_btn.clicked.connect(self.generate_led_preview)
+        preview_controls.addWidget(self.preview_generate_btn)
         self.preview_prev_btn = QPushButton("上一页")
         self.preview_prev_btn.clicked.connect(self.show_previous_preview_page)
         preview_controls.addWidget(self.preview_prev_btn)
@@ -256,7 +280,7 @@ class SettingsDialog(QDialog):
 
         self.preview_sample_check = QCheckBox("使用示例状态预览")
         self.preview_sample_check.setChecked(True)
-        self.preview_sample_check.toggled.connect(self.schedule_led_preview)
+        self.preview_sample_check.toggled.connect(self.mark_led_preview_stale)
         preview_layout.addWidget(self.preview_sample_check)
         layout.addWidget(preview_group, stretch=6)
 
@@ -265,14 +289,16 @@ class SettingsDialog(QDialog):
             self.led_height_edit,
             self.led_grades_per_page_edit,
             self.led_layout_regions_edit,
+            self.led_club_rows_edit,
+            self.led_club_groups_edit,
             self.led_title_edit,
         ):
             if isinstance(editor, QPlainTextEdit):
-                editor.textChanged.connect(self.schedule_led_preview)
+                editor.textChanged.connect(self.mark_led_preview_stale)
             else:
-                editor.textChanged.connect(self.schedule_led_preview)
-        self.led_show_title_check.toggled.connect(self.schedule_led_preview)
-        self.schedule_led_preview()
+                editor.textChanged.connect(self.mark_led_preview_stale)
+        self.led_show_title_check.toggled.connect(self.mark_led_preview_stale)
+        self._update_preview_buttons()
 
     def save_settings(self):
         new_school_id = self.school_id_edit.text().strip()
@@ -320,6 +346,8 @@ class SettingsDialog(QDialog):
         self.config.set("led_page_seconds", led_values["page_seconds"])
         self.config.set("led_grades_per_page", led_values["grades_per_page"])
         self.config.set("led_layout_regions", led_values["regions_per_page"])
+        self.config.set("led_club_rows_per_group", led_values["club_rows_per_group"])
+        self.config.set("led_club_groups_per_page", led_values["club_groups_per_page"])
         self.config.set(
             "led_dismissed_delay_seconds",
             led_values["dismissed_delay_seconds"],
@@ -442,7 +470,19 @@ class SettingsDialog(QDialog):
             if not 1 <= regions_per_page <= 6:
                 raise ValueError()
         except ValueError:
-            return fail("横向分区数必须是 1-6 的整数")
+            return fail("行政班横向分区数必须是 1-6 的整数")
+        try:
+            club_rows_per_group = int(self.led_club_rows_edit.text().strip())
+            if not 1 <= club_rows_per_group <= 6:
+                raise ValueError()
+        except ValueError:
+            return fail("社团班每组行数必须是 1-6 的整数")
+        try:
+            club_groups_per_page = int(self.led_club_groups_edit.text().strip())
+            if not 1 <= club_groups_per_page <= 6:
+                raise ValueError()
+        except ValueError:
+            return fail("社团班横向组数必须是 1-6 的整数")
         if show_title and not title:
             return fail("显示左侧标题时，标题内容不能为空")
         return {
@@ -453,20 +493,32 @@ class SettingsDialog(QDialog):
             "page_seconds": page_seconds,
             "grades_per_page": grades_per_page,
             "regions_per_page": regions_per_page,
+            "club_rows_per_group": club_rows_per_group,
+            "club_groups_per_page": club_groups_per_page,
             "dismissed_delay_seconds": dismissed_delay_seconds,
             "show_title": show_title,
             "title": title,
         }
 
-    def schedule_led_preview(self, *_args):
-        self._preview_timer.start()
+    def mark_led_preview_stale(self, *_args):
+        self._preview_state.mark_dirty()
+        self.preview_generate_btn.setText(self._preview_state.button_label)
+        if self._preview_state.has_preview:
+            self.preview_status_label.setText(
+                "参数已修改，当前画面仍是上一次结果；请点击“重新生成预览”。"
+            )
+        else:
+            self.preview_status_label.setText(
+                "参数已修改，请点击“生成预览”查看当前效果。"
+            )
 
-    def refresh_led_preview(self):
+    def generate_led_preview(self):
         values = self._get_led_values(show_errors=False)
         if values is None:
-            self._preview_pages = []
-            self._show_preview_message("请先填写有效的 LED 配置")
-            self.preview_page_label.setText("0 / 0")
+            if not self._preview_state.has_preview:
+                self._preview_pages = []
+                self._show_preview_message("请先填写有效的 LED 配置")
+                self.preview_page_label.setText("0 / 0")
             self.preview_status_label.setText(
                 self._led_validation_message or "LED 配置格式不正确。"
             )
@@ -476,35 +528,87 @@ class SettingsDialog(QDialog):
             self._show_preview_message("LED 服务未初始化，暂时无法生成预览")
             self.preview_status_label.setText("")
             return
-        try:
-            preview_dir = Path(get_app_root()) / "data" / "led-preview"
-            self._preview_pages = self.led_service.render_preview_pages(
-                preview_dir,
-                width=values["width"],
-                height=values["height"],
-                grades_per_page=values["grades_per_page"],
-                regions_per_page=values["regions_per_page"],
-                show_title=values["show_title"],
-                title=values["title"],
-                sample_statuses=self.preview_sample_check.isChecked(),
-            )
-        except Exception as exc:
+        request_revision = self._preview_state.begin()
+        if request_revision is None:
+            return
+        self.preview_generate_btn.setEnabled(False)
+        self.preview_generate_btn.setText(self._preview_state.button_label)
+        self.preview_status_label.setText("正在后台生成预览，请稍候…")
+        request_values = dict(values)
+        sample_statuses = self.preview_sample_check.isChecked()
+        preview_dir = Path(get_app_root()) / "data" / "led-preview"
+
+        def run():
+            try:
+                pages = self.led_service.render_preview_pages(
+                    preview_dir,
+                    width=request_values["width"],
+                    height=request_values["height"],
+                    grades_per_page=request_values["grades_per_page"],
+                    regions_per_page=request_values["regions_per_page"],
+                    show_title=request_values["show_title"],
+                    title=request_values["title"],
+                    sample_statuses=sample_statuses,
+                    club_rows_per_group=request_values["club_rows_per_group"],
+                    club_groups_per_page=request_values["club_groups_per_page"],
+                )
+                payload = {
+                    "revision": request_revision,
+                    "ok": True,
+                    "pages": pages,
+                    "values": request_values,
+                    "error": "",
+                }
+            except Exception as exc:
+                payload = {
+                    "revision": request_revision,
+                    "ok": False,
+                    "pages": [],
+                    "values": request_values,
+                    "error": str(exc),
+                }
+            if not self._closing:
+                self.preview_finished.emit(payload)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_preview_finished(self, payload):
+        stale = self._preview_state.complete(
+            payload["revision"],
+            success=payload["ok"],
+        )
+        self.preview_generate_btn.setEnabled(True)
+        self.preview_generate_btn.setText(self._preview_state.button_label)
+        if not payload["ok"]:
             self._preview_pages = []
             self._show_preview_message("预览生成失败")
-            self.preview_status_label.setText(str(exc))
+            self.preview_status_label.setText(payload["error"])
             self._update_preview_buttons()
             return
-        self._preview_index = min(self._preview_index, max(0, len(self._preview_pages) - 1))
+        values = payload["values"]
+        self._preview_pages = payload["pages"]
+        try:
+            self._preview_index = min(
+                self._preview_index,
+                max(0, len(self._preview_pages) - 1),
+            )
+        except Exception:
+            self._preview_index = 0
         if not self._preview_pages:
             self._show_preview_message("暂无可预览的班级")
             self.preview_status_label.setText("请先绑定学校并同步行政班或社团班数据。")
         else:
             self.preview_status_label.setText(
                 f"{values['width']}×{values['height']} 像素 · "
-                f"{values['regions_per_page']} 个横向分区 · "
-                f"每区 {values['grades_per_page']} 行 · 黑底红字为单色 LED 模拟效果"
+                f"行政班 {values['regions_per_page']} 区×{values['grades_per_page']} 行 · "
+                f"社团班 {values['club_groups_per_page']} 组×{values['club_rows_per_group']} 行 · "
+                "黑底红字为单色 LED 模拟效果"
             )
             self._show_preview_page()
+            if stale:
+                self.preview_status_label.setText(
+                    "预览已生成，但生成期间参数发生变化；请点击“重新生成预览”。"
+                )
         self._update_preview_buttons()
 
     def _show_preview_page(self):
@@ -649,6 +753,8 @@ class SettingsDialog(QDialog):
                 show_title=values["show_title"],
                 width=values["width"],
                 height=values["height"],
+                club_rows_per_group=values["club_rows_per_group"],
+                club_groups_per_page=values["club_groups_per_page"],
             )
         )
 

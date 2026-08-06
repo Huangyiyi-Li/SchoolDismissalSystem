@@ -4,7 +4,13 @@ from pathlib import Path
 
 from PIL import Image
 
-from src.services.led_renderer import build_led_page_layout, render_led_pages
+from src.services.led_renderer import (
+    build_led_page_layout,
+    calculate_club_column_widths,
+    render_club_led_pages,
+    render_led_pages,
+    split_club_name,
+)
 
 
 def make_class(class_id, grade_name, source_order):
@@ -97,6 +103,55 @@ class LedRendererTests(unittest.TestCase):
             [row.grade_name for row in layout.pages[0].rows],
             ["足球社团", "合唱社团"],
         )
+
+    def test_club_layout_uses_custom_groups_and_rows(self):
+        clubs = [
+            {
+                "class_id": str(200 + index),
+                "class_type": 2,
+                "class_name": f"社团{index + 1}",
+                "class_show_name": f"社团{index + 1}",
+                "source_order": index,
+            }
+            for index in range(50)
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pages = render_club_led_pages(
+                "",
+                clubs,
+                {},
+                Path(tmpdir),
+                width=1024,
+                height=96,
+                rows_per_group=4,
+                groups_per_page=5,
+                show_title=False,
+            )
+
+            self.assertEqual(len(pages), 3)
+            for page in pages:
+                with Image.open(page) as image:
+                    self.assertEqual(image.size, (1024, 96))
+                    self.assertEqual(image.mode, "1")
+
+    def test_club_status_column_reserves_three_character_single_line_width(self):
+        name_width, status_width = calculate_club_column_widths(204)
+
+        self.assertEqual((name_width, status_width), (118, 86))
+        self.assertGreater(status_width, 3 * 12)
+
+    def test_long_club_name_splits_into_at_most_two_balanced_lines(self):
+        lines = split_club_name("青少年科技创新社团")
+
+        self.assertEqual("".join(lines), "青少年科技创新社团")
+        self.assertEqual(len(lines), 2)
+        self.assertLessEqual(abs(len(lines[0]) - len(lines[1])), 1)
+
+    def test_short_name_can_also_wrap_when_the_cell_is_narrow(self):
+        lines = split_club_name("科技社团")
+
+        self.assertEqual(lines, ["科技", "社团"])
 
     def test_title_can_be_disabled_and_custom_pixel_size_is_used(self):
         with tempfile.TemporaryDirectory() as tmpdir:

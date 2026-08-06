@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .led_bridge_client import BridgeResult, JavaLedBridge
-from .led_renderer import render_led_pages
+from .led_renderer import render_club_led_pages, render_led_pages
 from ..utils.path_utils import get_app_root
 
 
@@ -570,6 +570,8 @@ class LedService:
         grades_per_page=None,
         regions_per_page=None,
         show_title=None,
+        club_rows_per_group=None,
+        club_groups_per_page=None,
     ):
         width = int(width if width is not None else self.config.get("led_width", 1024))
         height = int(height if height is not None else self.config.get("led_height", 96))
@@ -582,6 +584,16 @@ class LedService:
             regions_per_page
             if regions_per_page is not None
             else self.config.get("led_layout_regions", 1)
+        )
+        club_rows = int(
+            club_rows_per_group
+            if club_rows_per_group is not None
+            else self.config.get("led_club_rows_per_group", 4)
+        )
+        club_groups = int(
+            club_groups_per_page
+            if club_groups_per_page is not None
+            else self.config.get("led_club_groups_per_page", 5)
         )
         display_title = (
             self.config.get("led_school_title", "数智家校\n放学系统")
@@ -598,8 +610,21 @@ class LedService:
             classes = classes_by_type.get(class_type) or []
             if not classes:
                 continue
-            pages.extend(
-                render_led_pages(
+            if class_type == 2:
+                rendered = render_club_led_pages(
+                    display_title,
+                    classes,
+                    statuses,
+                    output_dir,
+                    width=width,
+                    height=height,
+                    rows_per_group=club_rows,
+                    groups_per_page=club_groups,
+                    show_title=title_visible,
+                    filename_prefix="led-club-page",
+                )
+            else:
+                rendered = render_led_pages(
                     display_title,
                     classes,
                     statuses,
@@ -609,10 +634,10 @@ class LedService:
                     grades_per_page=rows,
                     regions_per_page=regions,
                     show_title=title_visible,
-                    class_type=class_type,
-                    filename_prefix="led-page" if class_type == 1 else "led-club-page",
+                    class_type=1,
+                    filename_prefix="led-page",
                 )
-            )
+            pages.extend(rendered)
         return pages
 
     def render_preview_pages(
@@ -625,6 +650,8 @@ class LedService:
         show_title,
         title,
         sample_statuses=False,
+        club_rows_per_group=None,
+        club_groups_per_page=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -652,6 +679,8 @@ class LedService:
                 grades_per_page=grades_per_page,
                 regions_per_page=regions_per_page,
                 show_title=show_title,
+                club_rows_per_group=club_rows_per_group,
+                club_groups_per_page=club_groups_per_page,
             )
 
     def test_connection(self, ip=None, port=None):
@@ -769,6 +798,8 @@ class LedService:
         show_title=None,
         width=None,
         height=None,
+        club_rows_per_group=None,
+        club_groups_per_page=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -809,6 +840,8 @@ class LedService:
                 grades_per_page=grades_per_page,
                 regions_per_page=regions_per_page,
                 show_title=show_title,
+                club_rows_per_group=club_rows_per_group,
+                club_groups_per_page=club_groups_per_page,
             )
             result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),
