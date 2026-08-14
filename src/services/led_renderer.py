@@ -143,6 +143,8 @@ def _load_font(size):
 
 
 def _fit_font(draw, text, max_width, max_height, preferred=20, minimum=8):
+    preferred = max(1, int(preferred))
+    minimum = max(1, min(preferred, int(minimum)))
     for size in range(preferred, minimum - 1, -1):
         font = _load_font(size)
         box = draw.textbbox((0, 0), text, font=font)
@@ -272,7 +274,7 @@ def _draw_centered_club_name(
     _draw_centered_lines(draw, box, [shown], font, fill=fill)
 
 
-def _draw_title(draw, title, box, fill=1):
+def _draw_title(draw, title, box, fill=1, preferred=22):
     lines = [line.strip() for line in str(title or "").splitlines() if line.strip()]
     if not lines:
         return
@@ -283,7 +285,7 @@ def _draw_title(draw, title, box, fill=1):
             draw,
             (x1, int(y1 + index * line_height), x2, int(y1 + (index + 1) * line_height)),
             line,
-            preferred=22,
+            preferred=preferred,
             fill=fill,
         )
 
@@ -307,6 +309,9 @@ def render_led_pages(
     class_type=1,
     filename_prefix="led-page",
     color_mode="single",
+    title_font_size=0,
+    header_font_size=0,
+    cell_font_size=0,
 ):
     rows_per_region = max(1, int(grades_per_page))
     region_count = max(1, int(regions_per_page))
@@ -337,6 +342,9 @@ def render_led_pages(
     layout_color = LED_RED if color_mode == "double" else 1
     image_mode = "RGB" if color_mode == "double" else "1"
     background = LED_BLACK if color_mode == "double" else 0
+    title_preferred = int(title_font_size or 22)
+    header_preferred = int(header_font_size or 18)
+    cell_preferred = int(cell_font_size or 18)
     for page_index, page in enumerate(layout.pages, start=1):
         image = Image.new(image_mode, (width, height), background)
         draw = ImageDraw.Draw(image)
@@ -345,7 +353,11 @@ def render_led_pages(
         if show_title:
             draw.line((title_width, 0, title_width, height), fill=layout_color)
             _draw_title(
-                draw, school_title, (0, 0, title_width, height), fill=layout_color
+                draw,
+                school_title,
+                (0, 0, title_width, height),
+                fill=layout_color,
+                preferred=title_preferred,
             )
 
         for region_index in range(region_count):
@@ -380,7 +392,7 @@ def render_led_pages(
                 header = "状态" if int(class_type or 1) == 2 else f"{column + 1}班"
                 _draw_centered(
                     draw, (x1, 0, x2, header_height), header,
-                    preferred=18, fill=layout_color,
+                    preferred=header_preferred, fill=layout_color,
                 )
 
             for row_index, row in enumerate(rows):
@@ -394,7 +406,7 @@ def render_led_pages(
                     draw,
                     (region_x1, y1, data_x1, y2),
                     row.grade_name,
-                    preferred=18,
+                    preferred=header_preferred,
                     fill=layout_color,
                 )
                 for column, item in enumerate(row.classes):
@@ -405,7 +417,7 @@ def render_led_pages(
                         draw,
                         (x1, y1, x2, y2),
                         display_status(raw_status, color_mode),
-                        preferred=18,
+                        preferred=cell_preferred,
                         fill=status_color(raw_status, color_mode),
                     )
 
@@ -428,6 +440,9 @@ def render_club_led_pages(
     show_title=True,
     filename_prefix="led-club-page",
     color_mode="single",
+    title_font_size=0,
+    header_font_size=0,
+    cell_font_size=0,
 ):
     row_count = max(1, int(rows_per_group))
     group_count = max(1, int(groups_per_page))
@@ -454,6 +469,10 @@ def render_club_led_pages(
     layout_color = LED_RED if color_mode == "double" else 1
     image_mode = "RGB" if color_mode == "double" else "1"
     background = LED_BLACK if color_mode == "double" else 0
+    title_preferred = int(title_font_size or 22)
+    header_preferred = int(header_font_size or 14)
+    club_name_preferred = int(header_font_size or 16)
+    cell_preferred = int(cell_font_size or 12)
     for page_index, page in enumerate(layout.pages, start=1):
         image = Image.new(image_mode, (width, height), background)
         draw = ImageDraw.Draw(image)
@@ -461,7 +480,11 @@ def render_club_led_pages(
         if show_title:
             draw.line((title_width, 0, title_width, height), fill=layout_color)
             _draw_title(
-                draw, school_title, (0, 0, title_width, height), fill=layout_color
+                draw,
+                school_title,
+                (0, 0, title_width, height),
+                fill=layout_color,
+                preferred=title_preferred,
             )
 
         for group_index in range(group_count):
@@ -486,14 +509,14 @@ def render_club_led_pages(
                 draw,
                 (group_x1, 0, status_x1, header_height),
                 "社团名",
-                preferred=14,
+                preferred=header_preferred,
                 fill=layout_color,
             )
             _draw_centered_single_line(
                 draw,
                 (status_x1, 0, group_x2, header_height),
                 "状态",
-                preferred=14,
+                preferred=header_preferred,
                 fill=layout_color,
             )
 
@@ -505,6 +528,7 @@ def render_club_led_pages(
                     draw,
                     (group_x1, y1, status_x1, y2),
                     row.grade_name,
+                    preferred=club_name_preferred,
                     fill=layout_color,
                 )
                 raw_status = _status_for(statuses, item)
@@ -512,7 +536,7 @@ def render_club_led_pages(
                     draw,
                     (status_x1, y1, group_x2, y2),
                     display_status(raw_status, color_mode),
-                    preferred=12,
+                    preferred=cell_preferred,
                     fill=status_color(raw_status, color_mode),
                 )
 

@@ -780,6 +780,33 @@ class LedServiceTests(unittest.TestCase):
             self.assertEqual(service.get_status("101"), "放学中")
             self.assertFalse(status_timer.cancelled)
 
+    def test_configured_font_sizes_are_forwarded_to_formal_renderer(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = LedService(
+                FakeConfig({
+                    "school_id": "40125",
+                    "led_title_font_size": 27,
+                    "led_header_font_size": 19,
+                    "led_cell_font_size": 15,
+                }),
+                self.make_db(tmpdir),
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+            classes = service.db.get_led_classes("40125", class_type=1)
+
+            with patch(
+                "src.services.led_service.render_led_pages", return_value=[]
+            ) as render:
+                service._render_pages_for_types(
+                    {1: classes, 2: []}, {}, Path(tmpdir) / "pages"
+                )
+
+            self.assertEqual(render.call_args.kwargs["title_font_size"], 27)
+            self.assertEqual(render.call_args.kwargs["header_font_size"], 19)
+            self.assertEqual(render.call_args.kwargs["cell_font_size"], 15)
+
     def test_test_mode_uses_empty_isolated_statuses_and_restores_formal_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             service = LedService(

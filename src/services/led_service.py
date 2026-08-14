@@ -577,6 +577,9 @@ class LedService:
         club_rows_per_group=None,
         club_groups_per_page=None,
         color_mode=None,
+        title_font_size=None,
+        header_font_size=None,
+        cell_font_size=None,
     ):
         width = int(width if width is not None else self.config.get("led_width", 1024))
         height = int(height if height is not None else self.config.get("led_height", 96))
@@ -615,6 +618,21 @@ class LedService:
             if color_mode is not None
             else self.config.get("led_color_mode", "single")
         )
+        active_title_font_size = int(
+            title_font_size
+            if title_font_size is not None
+            else self.config.get("led_title_font_size", 0)
+        )
+        active_header_font_size = int(
+            header_font_size
+            if header_font_size is not None
+            else self.config.get("led_header_font_size", 0)
+        )
+        active_cell_font_size = int(
+            cell_font_size
+            if cell_font_size is not None
+            else self.config.get("led_cell_font_size", 0)
+        )
         pages = []
         for class_type in (1, 2):
             classes = classes_by_type.get(class_type) or []
@@ -633,6 +651,9 @@ class LedService:
                     show_title=title_visible,
                     filename_prefix="led-club-page",
                     color_mode=active_color_mode,
+                    title_font_size=active_title_font_size,
+                    header_font_size=active_header_font_size,
+                    cell_font_size=active_cell_font_size,
                 )
             else:
                 rendered = render_led_pages(
@@ -648,6 +669,9 @@ class LedService:
                     class_type=1,
                     filename_prefix="led-page",
                     color_mode=active_color_mode,
+                    title_font_size=active_title_font_size,
+                    header_font_size=active_header_font_size,
+                    cell_font_size=active_cell_font_size,
                 )
             pages.extend(rendered)
         return pages
@@ -665,6 +689,9 @@ class LedService:
         club_rows_per_group=None,
         club_groups_per_page=None,
         color_mode=None,
+        title_font_size=None,
+        header_font_size=None,
+        cell_font_size=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -699,6 +726,9 @@ class LedService:
                 club_rows_per_group=club_rows_per_group,
                 club_groups_per_page=club_groups_per_page,
                 color_mode=color_mode,
+                title_font_size=title_font_size,
+                header_font_size=header_font_size,
+                cell_font_size=cell_font_size,
             )
 
     def test_connection(self, ip=None, port=None):
@@ -819,6 +849,9 @@ class LedService:
         club_rows_per_group=None,
         club_groups_per_page=None,
         color_mode=None,
+        title_font_size=None,
+        header_font_size=None,
+        cell_font_size=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -872,6 +905,9 @@ class LedService:
                 club_rows_per_group=club_rows_per_group,
                 club_groups_per_page=club_groups_per_page,
                 color_mode=active_color_mode,
+                title_font_size=title_font_size,
+                header_font_size=header_font_size,
+                cell_font_size=cell_font_size,
             )
             result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),

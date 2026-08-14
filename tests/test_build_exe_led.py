@@ -9,6 +9,17 @@ from src.app_info import WINDOWS_EXE_NAME, WINDOWS_ZIP_NAME
 
 
 class BuildExeLedTests(unittest.TestCase):
+    def test_tag_release_does_not_duplicate_files_as_actions_artifact(self):
+        workflow = Path(".github/workflows/windows-build.yml").read_text(
+            encoding="utf-8"
+        )
+        upload_step = workflow.split("- name: Upload Windows build", 1)[1].split(
+            "- name: Publish GitHub pre-release", 1
+        )[0]
+
+        self.assertIn("!startsWith(github.ref, 'refs/tags/')", upload_step)
+        self.assertIn("retention-days: 3", upload_step)
+
     def test_release_zip_contains_led_bridge_sdk_and_runtime(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

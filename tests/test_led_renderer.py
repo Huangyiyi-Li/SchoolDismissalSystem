@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -29,6 +30,63 @@ def make_class(class_id, grade_name, source_order):
 
 
 class LedRendererTests(unittest.TestCase):
+    def test_administrative_fonts_use_three_independent_preferred_sizes(self):
+        classes = [make_class("101", "一年级", 0)]
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "src.services.led_renderer._draw_title"
+        ) as draw_title, patch(
+            "src.services.led_renderer._draw_centered"
+        ) as draw_centered:
+            render_led_pages(
+                "健康路小学",
+                classes,
+                {"101": "放学中"},
+                Path(tmpdir),
+                title_font_size=28,
+                header_font_size=20,
+                cell_font_size=16,
+            )
+
+        self.assertEqual(draw_title.call_args.kwargs["preferred"], 28)
+        preferred_by_text = {
+            call.args[2]: call.kwargs["preferred"]
+            for call in draw_centered.call_args_list
+        }
+        self.assertEqual(preferred_by_text["1班"], 20)
+        self.assertEqual(preferred_by_text["一年级"], 20)
+        self.assertEqual(preferred_by_text["放学中"], 16)
+
+    def test_club_fonts_use_header_size_for_names_and_cell_size_for_status(self):
+        clubs = [{
+            "class_id": "201",
+            "class_type": 2,
+            "class_name": "足球社团",
+            "class_show_name": "足球社团",
+            "source_order": 0,
+        }]
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "src.services.led_renderer._draw_centered_club_name"
+        ) as draw_name, patch(
+            "src.services.led_renderer._draw_centered_single_line"
+        ) as draw_single:
+            render_club_led_pages(
+                "",
+                clubs,
+                {"201": "已放学"},
+                Path(tmpdir),
+                show_title=False,
+                header_font_size=19,
+                cell_font_size=15,
+            )
+
+        self.assertEqual(draw_name.call_args.kwargs["preferred"], 19)
+        preferred_by_text = {
+            call.args[2]: call.kwargs["preferred"]
+            for call in draw_single.call_args_list
+        }
+        self.assertEqual(preferred_by_text["状态"], 19)
+        self.assertEqual(preferred_by_text["已放学"], 15)
+
     def test_status_copy_depends_on_configured_screen_color(self):
         self.assertEqual(display_status("", "single"), "")
         self.assertEqual(display_status("", "double"), "未放学")

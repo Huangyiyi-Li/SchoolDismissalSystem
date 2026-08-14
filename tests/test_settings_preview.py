@@ -31,6 +31,9 @@ class FakeConfig:
             "led_dismissed_delay_seconds": 5,
             "led_show_title": True,
             "led_school_title": "数智家校\n放学系统",
+            "led_title_font_size": 26,
+            "led_header_font_size": 18,
+            "led_cell_font_size": 14,
         }
 
     def get(self, key, default=None):
@@ -88,6 +91,23 @@ class SettingsPreviewTests(unittest.TestCase):
         self.assertEqual(kwargs["club_rows_per_group"], 4)
         self.assertEqual(kwargs["club_groups_per_page"], 5)
         self.assertEqual(kwargs["color_mode"], "single")
+        self.assertEqual(kwargs["title_font_size"], 26)
+        self.assertEqual(kwargs["header_font_size"], 18)
+        self.assertEqual(kwargs["cell_font_size"], 14)
+
+    def test_zero_font_size_is_presented_as_automatic(self):
+        config = FakeConfig()
+        config.values.update({
+            "led_title_font_size": 0,
+            "led_header_font_size": 0,
+            "led_cell_font_size": 0,
+        })
+        dialog = SettingsDialog(config, led_service=FakeLedService())
+        self.addCleanup(dialog.close)
+
+        self.assertEqual(dialog.led_title_font_size_spin.value(), 0)
+        self.assertEqual(dialog.led_title_font_size_spin.text(), "自动")
+        self.assertIn("放不下时自动缩小", dialog.led_font_size_hint.text())
 
     def test_dual_color_selection_updates_guidance_and_preview_request(self):
         dialog, service = self.make_dialog()

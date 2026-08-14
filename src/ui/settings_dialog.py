@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QMessageBox, QFormLayout,
                              QCheckBox, QPlainTextEdit, QGroupBox, QWidget,
-                             QScrollArea, QFrame, QComboBox)
+                             QScrollArea, QFrame, QComboBox, QSpinBox)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from ..services.device_identity import format_device_no_from_node, normalize_device_no
@@ -195,6 +195,25 @@ class SettingsDialog(QDialog):
         self.led_show_title_check.toggled.connect(self.led_title_edit.setEnabled)
         led_form.addRow("左侧标题:", self.led_title_edit)
 
+        self.led_title_font_size_spin = self._make_font_size_spin(
+            "led_title_font_size"
+        )
+        led_form.addRow("左侧标题字号:", self.led_title_font_size_spin)
+        self.led_header_font_size_spin = self._make_font_size_spin(
+            "led_header_font_size"
+        )
+        led_form.addRow("行列标题字号:", self.led_header_font_size_spin)
+        self.led_cell_font_size_spin = self._make_font_size_spin(
+            "led_cell_font_size"
+        )
+        led_form.addRow("单元格内容字号:", self.led_cell_font_size_spin)
+        self.led_font_size_hint = QLabel(
+            "自动会使用原有自适应字号；设置固定像素后，放不下时自动缩小，避免文字越界。"
+        )
+        self.led_font_size_hint.setWordWrap(True)
+        self.led_font_size_hint.setStyleSheet("color:#6b7280;font-size:12px;")
+        led_form.addRow("", self.led_font_size_hint)
+
         led_test_layout = QHBoxLayout()
         self.led_connect_btn = QPushButton("测试连接")
         self.led_connect_btn.clicked.connect(self.test_led_connection)
@@ -316,7 +335,21 @@ class SettingsDialog(QDialog):
         self.led_color_mode_combo.currentIndexChanged.connect(
             self.mark_led_preview_stale
         )
+        for spin in (
+            self.led_title_font_size_spin,
+            self.led_header_font_size_spin,
+            self.led_cell_font_size_spin,
+        ):
+            spin.valueChanged.connect(self.mark_led_preview_stale)
         self._update_preview_buttons()
+
+    def _make_font_size_spin(self, config_key):
+        spin = QSpinBox()
+        spin.setRange(0, 64)
+        spin.setSpecialValueText("自动")
+        spin.setValue(int(self.config.get(config_key, 0) or 0))
+        spin.setToolTip("自动或 1-64 像素")
+        return spin
 
     def save_settings(self):
         new_school_id = self.school_id_edit.text().strip()
@@ -376,6 +409,9 @@ class SettingsDialog(QDialog):
         )
         self.config.set("led_show_title", led_values["show_title"])
         self.config.set("led_school_title", led_values["title"])
+        self.config.set("led_title_font_size", led_values["title_font_size"])
+        self.config.set("led_header_font_size", led_values["header_font_size"])
+        self.config.set("led_cell_font_size", led_values["cell_font_size"])
         # Time settings removed
         self.config.save()
         if self.sync_service and self.sync_service.api:
@@ -522,6 +558,9 @@ class SettingsDialog(QDialog):
             "dismissed_delay_seconds": dismissed_delay_seconds,
             "show_title": show_title,
             "title": title,
+            "title_font_size": self.led_title_font_size_spin.value(),
+            "header_font_size": self.led_header_font_size_spin.value(),
+            "cell_font_size": self.led_cell_font_size_spin.value(),
         }
 
     def _update_led_color_hint(self, *_args):
@@ -601,6 +640,9 @@ class SettingsDialog(QDialog):
                     club_rows_per_group=request_values["club_rows_per_group"],
                     club_groups_per_page=request_values["club_groups_per_page"],
                     color_mode=request_values["color_mode"],
+                    title_font_size=request_values["title_font_size"],
+                    header_font_size=request_values["header_font_size"],
+                    cell_font_size=request_values["cell_font_size"],
                 )
                 payload = {
                     "revision": request_revision,
@@ -658,6 +700,9 @@ class SettingsDialog(QDialog):
                 f"{values['width']}×{values['height']} 像素 · "
                 f"行政班 {values['regions_per_page']} 区×{values['grades_per_page']} 行 · "
                 f"社团班 {values['club_groups_per_page']} 组×{values['club_rows_per_group']} 行 · "
+                f"字号 标题{values['title_font_size'] or '自动'} / "
+                f"行列{values['header_font_size'] or '自动'} / "
+                f"内容{values['cell_font_size'] or '自动'} · "
                 f"{color_summary}"
             )
             self._show_preview_page()
@@ -813,6 +858,9 @@ class SettingsDialog(QDialog):
                 club_rows_per_group=values["club_rows_per_group"],
                 club_groups_per_page=values["club_groups_per_page"],
                 color_mode=values["color_mode"],
+                title_font_size=values["title_font_size"],
+                header_font_size=values["header_font_size"],
+                cell_font_size=values["cell_font_size"],
             )
         )
 

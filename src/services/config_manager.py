@@ -31,7 +31,10 @@ class ConfigManager:
         "led_club_groups_per_page": 5,
         "led_dismissed_delay_seconds": 5,
         "led_show_title": True,
-        "led_school_title": "数智家校\n放学系统"
+        "led_school_title": "数智家校\n放学系统",
+        "led_title_font_size": 0,
+        "led_header_font_size": 0,
+        "led_cell_font_size": 0,
     }
 
     def __new__(cls, config_path=None):

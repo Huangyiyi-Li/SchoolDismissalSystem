@@ -110,6 +110,7 @@ jobs:
           "$hash  $setupName" | Set-Content "dist\${{ steps.app_info.outputs.setup_sha_name }}" -Encoding utf8
 
       - name: Upload Windows build
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -121,7 +122,7 @@ jobs:
             dist/${{ steps.app_info.outputs.setup_name }}
             dist/${{ steps.app_info.outputs.setup_sha_name }}
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 3
 
       - name: Publish GitHub pre-release
         if: ${{ startsWith(github.ref, 'refs/tags/') && contains(steps.app_info.outputs.version, '-') }}
