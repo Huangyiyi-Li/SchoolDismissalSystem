@@ -1,6 +1,7 @@
 import os
 import time
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -34,10 +35,19 @@ class FakeConfig:
             "led_title_font_size": 26,
             "led_header_font_size": 18,
             "led_cell_font_size": 14,
+            "tts_rate": 160,
+            "tts_repeat_count": 2,
+            "tts_repeat_interval_seconds": 0.6,
         }
 
     def get(self, key, default=None):
         return self.values.get(key, default)
+
+    def set(self, key, value):
+        self.values[key] = value
+
+    def save(self):
+        pass
 
 
 class FakeLedService:
@@ -79,6 +89,45 @@ class SettingsPreviewTests(unittest.TestCase):
 
         self.assertEqual(service.preview_calls, [])
         self.assertEqual(dialog.preview_generate_btn.text(), "生成预览")
+
+    def test_voice_playback_settings_are_loaded(self):
+        dialog, _service = self.make_dialog()
+
+        self.assertFalse(dialog.tts_default_rate_check.isChecked())
+        self.assertEqual(dialog.tts_rate_spin.value(), 160)
+        self.assertEqual(dialog.tts_repeat_count_spin.value(), 2)
+        self.assertAlmostEqual(dialog.tts_repeat_interval_spin.value(), 0.6)
+
+    def test_invalid_voice_settings_fall_back_without_blocking_settings_dialog(self):
+        config = FakeConfig()
+        config.values.update({
+            "tts_rate": "bad",
+            "tts_repeat_count": "bad",
+            "tts_repeat_interval_seconds": "bad",
+        })
+
+        dialog = SettingsDialog(config, led_service=FakeLedService())
+        self.addCleanup(dialog.close)
+
+        self.assertTrue(dialog.tts_default_rate_check.isChecked())
+        self.assertEqual(dialog.tts_repeat_count_spin.value(), 3)
+        self.assertEqual(dialog.tts_repeat_interval_spin.value(), 0)
+
+    def test_voice_playback_settings_are_saved(self):
+        dialog, _service = self.make_dialog()
+        dialog.tts_default_rate_check.setChecked(False)
+        dialog.tts_rate_spin.setValue(180)
+        dialog.tts_repeat_count_spin.setValue(4)
+        dialog.tts_repeat_interval_spin.setValue(1.2)
+
+        with patch("src.ui.settings_dialog.QMessageBox.information"):
+            dialog.save_settings()
+
+        self.assertEqual(dialog.config.values["tts_rate"], 180)
+        self.assertEqual(dialog.config.values["tts_repeat_count"], 4)
+        self.assertEqual(
+            dialog.config.values["tts_repeat_interval_seconds"], 1.2
+        )
 
     def test_generate_preview_button_runs_current_values_in_background(self):
         dialog, service = self.make_dialog()

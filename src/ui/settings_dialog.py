@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QMessageBox, QFormLayout,
                              QCheckBox, QPlainTextEdit, QGroupBox, QWidget,
-                             QScrollArea, QFrame, QComboBox, QSpinBox)
+                             QScrollArea, QFrame, QComboBox, QSpinBox,
+                             QDoubleSpinBox)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from ..services.device_identity import format_device_no_from_node, normalize_device_no
@@ -11,6 +12,7 @@ from ..services.led_preview import (
     colorize_led_preview,
     scaled_preview_size,
 )
+from ..services.tts_settings import tts_settings_from_config
 from ..utils.path_utils import get_app_root
 import ipaddress
 import threading
@@ -90,6 +92,55 @@ class SettingsDialog(QDialog):
         # Time is now managed via Server Schedule
 
         left_layout.addLayout(form_layout)
+
+        voice_group = QGroupBox("语音播报")
+        voice_form = QFormLayout(voice_group)
+
+        voice_settings = tts_settings_from_config(self.config)
+        saved_tts_rate = voice_settings.rate
+        rate_layout = QHBoxLayout()
+        self.tts_default_rate_check = QCheckBox("系统默认")
+        self.tts_default_rate_check.setChecked(saved_tts_rate == 0)
+        rate_layout.addWidget(self.tts_default_rate_check)
+        self.tts_rate_spin = QSpinBox()
+        self.tts_rate_spin.setRange(80, 300)
+        self.tts_rate_spin.setValue(saved_tts_rate or 160)
+        self.tts_rate_spin.setToolTip("数值越大，播报越快")
+        self.tts_rate_spin.setEnabled(saved_tts_rate != 0)
+        rate_layout.addWidget(self.tts_rate_spin)
+        rate_layout.addStretch(1)
+        self.tts_default_rate_check.toggled.connect(
+            lambda checked: self.tts_rate_spin.setEnabled(not checked)
+        )
+        voice_form.addRow("播报语速:", rate_layout)
+
+        self.tts_repeat_count_spin = QSpinBox()
+        self.tts_repeat_count_spin.setRange(1, 10)
+        self.tts_repeat_count_spin.setSuffix(" 遍")
+        self.tts_repeat_count_spin.setValue(
+            voice_settings.repeat_count
+        )
+        voice_form.addRow("重复次数:", self.tts_repeat_count_spin)
+
+        self.tts_repeat_interval_spin = QDoubleSpinBox()
+        self.tts_repeat_interval_spin.setRange(0, 10)
+        self.tts_repeat_interval_spin.setDecimals(1)
+        self.tts_repeat_interval_spin.setSingleStep(0.1)
+        self.tts_repeat_interval_spin.setSuffix(" 秒")
+        self.tts_repeat_interval_spin.setSpecialValueText("自然停顿")
+        self.tts_repeat_interval_spin.setValue(
+            voice_settings.interval_seconds
+        )
+        voice_form.addRow("每遍间隔时间:", self.tts_repeat_interval_spin)
+
+        voice_hint = QLabel(
+            "自定义语速范围 80-300，数值越大越快；“自然停顿”由 Windows 语音决定。"
+            "保存后从下一条播报开始生效。"
+        )
+        voice_hint.setWordWrap(True)
+        voice_hint.setStyleSheet("color:#6b7280;font-size:12px;")
+        voice_form.addRow("", voice_hint)
+        left_layout.addWidget(voice_group)
 
         led_group = QGroupBox("LED 屏（仰邦 BX-6E1XP）")
         led_form = QFormLayout(led_group)
@@ -392,6 +443,17 @@ class SettingsDialog(QDialog):
         self.config.set("device_no", device_no)
         self.config.set("mqtt_enabled", self.mqtt_enabled_check.isChecked())
         self.config.set("udp_port", port)
+        self.config.set(
+            "tts_rate",
+            0
+            if self.tts_default_rate_check.isChecked()
+            else self.tts_rate_spin.value(),
+        )
+        self.config.set("tts_repeat_count", self.tts_repeat_count_spin.value())
+        self.config.set(
+            "tts_repeat_interval_seconds",
+            self.tts_repeat_interval_spin.value(),
+        )
         self.config.set("led_enabled", new_led_enabled)
         self.config.set("led_controller_ip", led_values["ip"])
         self.config.set("led_controller_port", led_values["port"])

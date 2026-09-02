@@ -3,23 +3,90 @@ import pyttsx3
 import datetime
 import time
 import queue
+import threading
 
 from .voice_text import build_dismissal_voice_text
 from .broadcast_mode import get_effective_window_signature
 from .dismissal_window import get_active_window_signature, is_led_output_active
 from .log_records import DISPLAY_TIMESTAMP_FORMAT
+from .tts_settings import normalize_tts_settings, tts_settings_from_config
+
+
+def play_tts_message(
+    engine,
+    text,
+    rate=0,
+    repeat_count=3,
+    interval_seconds=0,
+    sleep_fn=time.sleep,
+    wait_fn=None,
+):
+    """Play one message using the configured voice rhythm."""
+    settings = normalize_tts_settings(rate, repeat_count, interval_seconds)
+    if settings.rate:
+        engine.setProperty("rate", settings.rate)
+
+    if settings.interval_seconds == 0:
+        if wait_fn is None:
+            engine.say("，".join([text] * settings.repeat_count))
+            engine.runAndWait()
+            return
+        for index in range(settings.repeat_count):
+            if wait_fn(0):
+                return
+            suffix = "，" if index < settings.repeat_count - 1 else ""
+            engine.say(f"{text}{suffix}")
+            engine.runAndWait()
+            if wait_fn(0):
+                return
+        return
+
+    for index in range(settings.repeat_count):
+        engine.say(text)
+        engine.runAndWait()
+        if index < settings.repeat_count - 1:
+            if wait_fn is not None:
+                if wait_fn(settings.interval_seconds):
+                    return
+            else:
+                sleep_fn(settings.interval_seconds)
+
 
 class TTSWorker(QObject):
     finished = pyqtSignal()
     
-    def __init__(self):
+    def __init__(self, config_manager=None):
         super().__init__()
+        self.config = config_manager
         self.queue = queue.Queue()
         self.retry_count = 3
         self.running = True
+        self._stop_event = threading.Event()
 
     def add_text(self, text):
         self.queue.put(text)
+
+    def _play_text(self, text):
+        if self._stop_event.is_set():
+            return
+        engine = pyttsx3.init()
+        try:
+            engine.setProperty("volume", 1.0)
+            settings = (
+                tts_settings_from_config(self.config)
+                if self.config is not None
+                else normalize_tts_settings(0, 3, 0)
+            )
+            play_tts_message(
+                engine,
+                text,
+                rate=settings.rate,
+                repeat_count=settings.repeat_count,
+                interval_seconds=settings.interval_seconds,
+                wait_fn=self._stop_event.wait,
+            )
+        finally:
+            engine.stop()
 
     def run(self):
         # Windows/PyQt6 thread compatibility fix for SAPI5
@@ -37,28 +104,16 @@ class TTSWorker(QObject):
                     
                     try:
                         # Re-init engine for each broadcast to prevent SAPI state issues
-                        engine = pyttsx3.init()
-                        engine.setProperty('volume', 1.0)
-                        
-                        # Broadcast 3 times
-                        full_text = f"{text}，{text}，{text}"
-                        engine.say(full_text)
-                        
-                        # Use runAndWait to block until finished
-                        engine.runAndWait()
-                        
-                        # Cleanup engine explicitly
-                        engine.stop()
-                        del engine
+                        self._play_text(text)
                     except Exception as e_inner:
                          print(f"[TTS] Inner Loop Error: {e_inner}")
 
-                    time.sleep(0.5) 
+                    self._stop_event.wait(0.5)
                 else:
-                    time.sleep(0.1)
+                    self._stop_event.wait(0.1)
             except Exception as e:
                 print(f"[TTS] Playback Error: {e}")
-                time.sleep(1)
+                self._stop_event.wait(1)
         
         # Cleanup COM in the WORKER THREAD
         try:
@@ -69,6 +124,7 @@ class TTSWorker(QObject):
 
     def stop(self):
         self.running = False
+        self._stop_event.set()
         # Do NOT uninitialize COM here, as this runs in Main Thread!
 
 
@@ -98,7 +154,7 @@ class BroadcastManager(QObject):
         
         # TTS Thread
         self.tts_thread = QThread()
-        self.tts_worker = TTSWorker()
+        self.tts_worker = TTSWorker(self.config)
         self.tts_worker.moveToThread(self.tts_thread)
         self.tts_thread.started.connect(self.tts_worker.run)
         self.tts_thread.start()

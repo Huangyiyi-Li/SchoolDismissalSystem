@@ -56,6 +56,32 @@ class LedConfigTests(unittest.TestCase):
             self.assertTrue(config.get("led_show_title"))
             self.assertEqual(config.get("led_dismissed_delay_seconds"), 5)
 
+    def test_voice_playback_defaults_preserve_existing_behavior(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ConfigManager._instance = None
+            config = ConfigManager(os.path.join(tmpdir, "settings.json"))
+
+            self.assertEqual(config.get("tts_rate"), 0)
+            self.assertEqual(config.get("tts_repeat_count"), 3)
+            self.assertEqual(config.get("tts_repeat_interval_seconds"), 0)
+
+    def test_voice_playback_settings_persist(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "settings.json")
+            ConfigManager._instance = None
+            config = ConfigManager(path)
+            config.set("tts_rate", 160)
+            config.set("tts_repeat_count", 2)
+            config.set("tts_repeat_interval_seconds", 0.6)
+            config.save()
+
+            ConfigManager._instance = None
+            reloaded = ConfigManager(path)
+
+            self.assertEqual(reloaded.get("tts_rate"), 160)
+            self.assertEqual(reloaded.get("tts_repeat_count"), 2)
+            self.assertEqual(reloaded.get("tts_repeat_interval_seconds"), 0.6)
+
 
 if __name__ == "__main__":
     unittest.main()

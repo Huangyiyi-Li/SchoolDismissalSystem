@@ -10,7 +10,7 @@
   * 支持从 2.0 云端 API 同步班级、班级类型与卡号映射关系。
   * 支持从 2.0 云端 API 获取按班级类型分组的每日放学时间表。
   * 所有数据本地缓存（SQLite + JSON），断网不影响基础播报。
-* **语音播报 (TTS)**: 使用 `pyttsx3` 引擎，支持多线程防阻塞播报，自动重试。
+* **语音播报 (TTS)**: 使用 `pyttsx3` 引擎，支持多线程防阻塞播报，并可配置语速、重复次数和每遍间隔。
 * **智能去重**: 可配置去重时间窗口，避免短时间内重复刷卡造成的重复播报。
 * **实时监控 UI**:
   * **实时日志**: 显示详细的刷卡、解析、API 交互日志。
@@ -61,6 +61,9 @@ pip install -r requirements.txt
 * `udp_port`: UDP 监听端口 (默认 39169)。
 * `api_base_url`: API 地址，测试环境为 `https://rest-test.xxt.cn`，正式环境为 `https://rest.xxt.cn`。
 * `device_no`: MQTT 设备编号；留空时程序会用本机 MAC 生成 12 位大写十六进制编号并保存，例如 `AABBCCDDEEFF`。
+* `tts_rate`: 播报语速；`0` 使用 Windows 系统默认语速，自定义范围为 `80-300`。
+* `tts_repeat_count`: 每条放学语音重复次数，范围为 `1-10`，默认 `3`。
+* `tts_repeat_interval_seconds`: 每遍之间的间隔秒数，范围为 `0-10`；`0` 使用系统语音自然停顿。
 * `led_enabled`: 是否启用 LED 状态屏，默认关闭。
 * `led_controller_ip`: 控制卡 IP，默认 `192.168.100.1`。
 * `led_controller_port`: 控制卡端口，默认 `5005`。
