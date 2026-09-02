@@ -51,8 +51,12 @@ class FakeConfig:
 
 
 class FakeLedService:
-    def __init__(self):
+    def __init__(self, grades=None):
         self.preview_calls = []
+        self.grades = grades or ["一年级", "二年级", "三年级"]
+
+    def get_available_admin_grades(self, school_id=None):
+        return list(self.grades)
 
     def render_preview_pages(self, *args, **kwargs):
         self.preview_calls.append((args, kwargs))
@@ -143,6 +147,56 @@ class SettingsPreviewTests(unittest.TestCase):
         self.assertEqual(kwargs["title_font_size"], 26)
         self.assertEqual(kwargs["header_font_size"], 18)
         self.assertEqual(kwargs["cell_font_size"], 14)
+
+    def test_all_grades_is_safe_default_and_disables_individual_choices(self):
+        dialog, _service = self.make_dialog()
+
+        self.assertTrue(dialog.led_all_grades_check.isChecked())
+        self.assertEqual(
+            list(dialog.led_grade_checks),
+            ["一年级", "二年级", "三年级"],
+        )
+        self.assertTrue(
+            all(not checkbox.isEnabled() for checkbox in dialog.led_grade_checks.values())
+        )
+
+    def test_selected_grades_are_saved_and_forwarded_to_preview(self):
+        dialog, service = self.make_dialog()
+        dialog.led_all_grades_check.setChecked(False)
+        dialog.led_grade_checks["一年级"].setChecked(False)
+        dialog.led_grade_checks["二年级"].setChecked(True)
+        dialog.led_grade_checks["三年级"].setChecked(False)
+
+        dialog.preview_generate_btn.click()
+
+        self.assertTrue(self.wait_until(lambda: len(service.preview_calls) == 1))
+        self.assertTrue(self.wait_until(lambda: dialog.preview_generate_btn.isEnabled()))
+        kwargs = service.preview_calls[0][1]
+        self.assertEqual(kwargs["grade_filter_mode"], "selected")
+        self.assertEqual(kwargs["visible_grades"], ["二年级"])
+        self.assertIn("LED 年级 二年级", dialog.preview_status_label.text())
+
+        with patch("src.ui.settings_dialog.QMessageBox.information"):
+            dialog.save_settings()
+
+        self.assertEqual(dialog.config.values["led_grade_filter_mode"], "selected")
+        self.assertEqual(dialog.config.values["led_visible_grades"], ["二年级"])
+
+    def test_saved_grade_missing_from_current_sync_is_marked_invalid(self):
+        config = FakeConfig()
+        config.values.update(
+            {
+                "led_grade_filter_mode": "selected",
+                "led_visible_grades": ["七年级"],
+            }
+        )
+        dialog = SettingsDialog(
+            config,
+            led_service=FakeLedService(grades=["一年级", "二年级"]),
+        )
+        self.addCleanup(dialog.close)
+
+        self.assertIn("已失效", dialog.led_grade_checks["七年级"].text())
 
     def test_zero_font_size_is_presented_as_automatic(self):
         config = FakeConfig()

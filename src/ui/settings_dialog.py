@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QMessageBox, QFormLayout,
                              QCheckBox, QPlainTextEdit, QGroupBox, QWidget,
                              QScrollArea, QFrame, QComboBox, QSpinBox,
-                             QDoubleSpinBox)
+                             QDoubleSpinBox, QGridLayout)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from ..services.device_identity import format_device_no_from_node, normalize_device_no
@@ -207,6 +207,60 @@ class SettingsDialog(QDialog):
         )
         self.led_layout_regions_edit.setPlaceholderText("行政班横向分区数 1-6")
         led_form.addRow("行政班横向分区:", self.led_layout_regions_edit)
+
+        grade_filter_widget = QWidget()
+        grade_filter_layout = QVBoxLayout(grade_filter_widget)
+        grade_filter_layout.setContentsMargins(0, 0, 0, 0)
+        self.led_all_grades_check = QCheckBox("显示全部年级")
+        grade_filter_layout.addWidget(self.led_all_grades_check)
+        grade_choices_widget = QWidget()
+        grade_choices_layout = QGridLayout(grade_choices_widget)
+        grade_choices_layout.setContentsMargins(0, 0, 0, 0)
+        self.led_grade_checks = {}
+        saved_mode = self.config.get("led_grade_filter_mode", "all")
+        saved_grades = self._normalize_grade_names(
+            self.config.get("led_visible_grades", [])
+        )
+        available_grades = []
+        if self.led_service and hasattr(
+            self.led_service, "get_available_admin_grades"
+        ):
+            available_grades = self.led_service.get_available_admin_grades(
+                self.config.get("school_id")
+            )
+        available_grades = self._normalize_grade_names(available_grades)
+        for grade_name in self._normalize_grade_names(
+            list(available_grades) + saved_grades
+        ):
+            is_stale = grade_name in saved_grades and grade_name not in available_grades
+            checkbox = QCheckBox(
+                f"{grade_name}（已失效）" if is_stale else grade_name
+            )
+            if is_stale:
+                checkbox.setToolTip("当前同步数据中已没有该年级，请重新选择")
+            checkbox.setChecked(saved_mode == "selected" and grade_name in saved_grades)
+            checkbox.toggled.connect(self.mark_led_preview_stale)
+            self.led_grade_checks[grade_name] = checkbox
+            index = len(self.led_grade_checks) - 1
+            grade_choices_layout.addWidget(checkbox, index // 3, index % 3)
+        if not self.led_grade_checks:
+            no_grades_label = QLabel("暂无年级数据，请先同步学校数据")
+            no_grades_label.setStyleSheet("color:#9ca3af;")
+            grade_choices_layout.addWidget(no_grades_label, 0, 0, 1, 3)
+        grade_filter_layout.addWidget(grade_choices_widget)
+        self.led_grade_filter_hint = QLabel(
+            "仅影响行政班 LED 画面；未选择的年级仍会正常语音播报、记录日志并推送服务端。"
+        )
+        self.led_grade_filter_hint.setWordWrap(True)
+        self.led_grade_filter_hint.setStyleSheet("color:#6b7280;font-size:12px;")
+        grade_filter_layout.addWidget(self.led_grade_filter_hint)
+        self.led_all_grades_check.setChecked(saved_mode != "selected")
+        self.led_all_grades_check.toggled.connect(
+            self._update_led_grade_filter_state
+        )
+        self.led_all_grades_check.toggled.connect(self.mark_led_preview_stale)
+        self._update_led_grade_filter_state()
+        led_form.addRow("LED 显示年级:", grade_filter_widget)
 
         self.led_club_rows_edit = QLineEdit(
             str(self.config.get("led_club_rows_per_group", 4))
@@ -463,6 +517,8 @@ class SettingsDialog(QDialog):
         self.config.set("led_page_seconds", led_values["page_seconds"])
         self.config.set("led_grades_per_page", led_values["grades_per_page"])
         self.config.set("led_layout_regions", led_values["regions_per_page"])
+        self.config.set("led_grade_filter_mode", led_values["grade_filter_mode"])
+        self.config.set("led_visible_grades", led_values["visible_grades"])
         self.config.set("led_club_rows_per_group", led_values["club_rows_per_group"])
         self.config.set("led_club_groups_per_page", led_values["club_groups_per_page"])
         self.config.set(
@@ -536,6 +592,31 @@ class SettingsDialog(QDialog):
     def fill_local_device_no(self):
         self.device_no_edit.setText(format_device_no_from_node(uuid.getnode()))
 
+    @staticmethod
+    def _normalize_grade_names(values):
+        if not isinstance(values, (list, tuple, set)):
+            return []
+        normalized = []
+        for value in values:
+            grade_name = str(value or "").strip()
+            if grade_name and grade_name not in normalized:
+                normalized.append(grade_name)
+        return normalized
+
+    def _update_led_grade_filter_state(self, *_args):
+        enabled = not self.led_all_grades_check.isChecked()
+        for checkbox in self.led_grade_checks.values():
+            checkbox.setEnabled(enabled)
+
+    def _current_led_grade_filter(self):
+        if self.led_all_grades_check.isChecked():
+            return "all", []
+        return "selected", [
+            grade_name
+            for grade_name, checkbox in self.led_grade_checks.items()
+            if checkbox.isChecked()
+        ]
+
     def _get_led_values(self, show_errors=True):
         self._led_validation_message = ""
 
@@ -606,6 +687,9 @@ class SettingsDialog(QDialog):
             return fail("社团班横向组数必须是 1-6 的整数")
         if show_title and not title:
             return fail("显示左侧标题时，标题内容不能为空")
+        grade_filter_mode, visible_grades = self._current_led_grade_filter()
+        if grade_filter_mode == "selected" and not visible_grades:
+            return fail("指定 LED 显示年级时，至少选择一个年级")
         return {
             "ip": ip,
             "port": port,
@@ -615,6 +699,8 @@ class SettingsDialog(QDialog):
             "page_seconds": page_seconds,
             "grades_per_page": grades_per_page,
             "regions_per_page": regions_per_page,
+            "grade_filter_mode": grade_filter_mode,
+            "visible_grades": visible_grades,
             "club_rows_per_group": club_rows_per_group,
             "club_groups_per_page": club_groups_per_page,
             "dismissed_delay_seconds": dismissed_delay_seconds,
@@ -705,6 +791,8 @@ class SettingsDialog(QDialog):
                     title_font_size=request_values["title_font_size"],
                     header_font_size=request_values["header_font_size"],
                     cell_font_size=request_values["cell_font_size"],
+                    grade_filter_mode=request_values["grade_filter_mode"],
+                    visible_grades=request_values["visible_grades"],
                 )
                 payload = {
                     "revision": request_revision,
@@ -740,6 +828,11 @@ class SettingsDialog(QDialog):
             self._update_preview_buttons()
             return
         values = payload["values"]
+        grade_summary = (
+            "全部"
+            if values["grade_filter_mode"] == "all"
+            else "、".join(values["visible_grades"])
+        )
         self._preview_color_mode = values["color_mode"]
         self._preview_pages = payload["pages"]
         try:
@@ -751,7 +844,9 @@ class SettingsDialog(QDialog):
             self._preview_index = 0
         if not self._preview_pages:
             self._show_preview_message("暂无可预览的班级")
-            self.preview_status_label.setText("请先绑定学校并同步行政班或社团班数据。")
+            self.preview_status_label.setText(
+                f"LED 年级 {grade_summary}；请先绑定学校并同步行政班或社团班数据。"
+            )
         else:
             color_summary = (
                 "双色模拟：未放学黄 / 放学中红 / 已放学绿"
@@ -761,6 +856,7 @@ class SettingsDialog(QDialog):
             self.preview_status_label.setText(
                 f"{values['width']}×{values['height']} 像素 · "
                 f"行政班 {values['regions_per_page']} 区×{values['grades_per_page']} 行 · "
+                f"LED 年级 {grade_summary} · "
                 f"社团班 {values['club_groups_per_page']} 组×{values['club_rows_per_group']} 行 · "
                 f"字号 标题{values['title_font_size'] or '自动'} / "
                 f"行列{values['header_font_size'] or '自动'} / "
@@ -923,6 +1019,8 @@ class SettingsDialog(QDialog):
                 title_font_size=values["title_font_size"],
                 header_font_size=values["header_font_size"],
                 cell_font_size=values["cell_font_size"],
+                grade_filter_mode=values["grade_filter_mode"],
+                visible_grades=values["visible_grades"],
             )
         )
 

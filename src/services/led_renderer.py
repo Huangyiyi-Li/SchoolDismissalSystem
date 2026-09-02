@@ -335,7 +335,6 @@ def render_led_pages(
     title_width = min(170, max(1, width // 7)) if show_title else 0
     content_width = width - title_width
     region_width = content_width / region_count
-    header_height = max(1, height // (rows_per_region + 1))
     paths = []
 
     color_mode = normalize_color_mode(color_mode)
@@ -362,10 +361,14 @@ def render_led_pages(
 
         for region_index in range(region_count):
             rows = page.regions[region_index] if region_index < len(page.regions) else []
+            actual_row_count = max(1, len(rows))
+            header_height = max(1, height // (actual_row_count + 1))
             region_x1 = round(title_width + region_width * region_index)
             region_x2 = round(title_width + region_width * (region_index + 1))
             if region_index:
                 draw.line((region_x1, 0, region_x1, height), fill=layout_color)
+            if not rows:
+                continue
             grade_width = min(
                 90,
                 max(1, int((region_x2 - region_x1) * 0.18)),
@@ -382,7 +385,7 @@ def render_led_pages(
             for column in range(1, region_columns):
                 x = round(data_x1 + class_width * column)
                 draw.line((x, 0, x, height), fill=layout_color)
-            for row_index in range(1, rows_per_region):
+            for row_index in range(1, actual_row_count):
                 y = header_height * (row_index + 1)
                 draw.line((region_x1, y, region_x2, y), fill=layout_color)
 
@@ -399,7 +402,7 @@ def render_led_pages(
                 y1 = header_height * (row_index + 1)
                 y2 = (
                     header_height * (row_index + 2)
-                    if row_index < rows_per_region - 1
+                    if row_index < len(rows) - 1
                     else height
                 )
                 _draw_centered(

@@ -147,7 +147,58 @@ class LedRendererTests(unittest.TestCase):
             for page in pages:
                 with Image.open(page) as image:
                     self.assertEqual(image.size, (1024, 96))
-                    self.assertEqual(image.mode, "1")
+                self.assertEqual(image.mode, "1")
+
+    def test_last_page_adapts_rows_and_columns_to_uneven_grade_sizes(self):
+        classes = []
+        source_order = 0
+        for grade_name, class_count in (
+            ("二年级", 14),
+            ("三年级", 14),
+            ("七年级", 28),
+        ):
+            for class_number in range(1, class_count + 1):
+                classes.append(
+                    {
+                        "class_id": f"{grade_name}-{class_number}",
+                        "grade_name": grade_name,
+                        "class_name": f"{grade_name}{class_number}班",
+                        "class_show_name": f"{class_number}班",
+                        "source_order": source_order,
+                        "class_type": 1,
+                    }
+                )
+                source_order += 1
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "src.services.led_renderer._draw_centered"
+        ) as draw_centered:
+            pages = render_led_pages(
+                "放学系统",
+                classes,
+                {},
+                Path(tmpdir),
+                width=1024,
+                height=96,
+                grades_per_page=2,
+                regions_per_page=1,
+            )
+
+        boxes_by_text = {}
+        for call in draw_centered.call_args_list:
+            if call.args[2] in {"二年级", "三年级", "七年级", "14班", "28班"}:
+                boxes_by_text.setdefault(call.args[2], []).append(call.args[1])
+        self.assertEqual(len(pages), 2)
+        second_grade_box = boxes_by_text["二年级"][0]
+        seventh_grade_box = boxes_by_text["七年级"][0]
+        second_grade_height = second_grade_box[3] - second_grade_box[1]
+        seventh_grade_height = seventh_grade_box[3] - seventh_grade_box[1]
+        first_page_cell_width = max(
+            box[2] - box[0] for box in boxes_by_text["14班"]
+        )
+        second_page_cell_width = boxes_by_text["28班"][0][2] - boxes_by_text["28班"][0][0]
+        self.assertGreater(seventh_grade_height, second_grade_height)
+        self.assertGreater(first_page_cell_width, second_page_cell_width)
 
     def test_three_horizontal_regions_place_six_grades_on_one_page(self):
         classes = [make_class(str(index), f"{index}年级", index) for index in range(1, 7)]
@@ -163,6 +214,24 @@ class LedRendererTests(unittest.TestCase):
             [[row.grade_name for row in region] for region in layout.pages[0].regions],
             [["1年级", "2年级"], ["3年级", "4年级"], ["5年级", "6年级"]],
         )
+
+    def test_empty_trailing_region_does_not_draw_fake_class_header(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "src.services.led_renderer._draw_centered"
+        ) as draw_centered:
+            render_led_pages(
+                "放学系统",
+                [make_class("101", "一年级", 0)],
+                {},
+                Path(tmpdir),
+                grades_per_page=1,
+                regions_per_page=2,
+            )
+
+        header_calls = [
+            call for call in draw_centered.call_args_list if call.args[2] == "1班"
+        ]
+        self.assertEqual(len(header_calls), 1)
 
     def test_club_classes_render_as_named_rows_with_status_column(self):
         clubs = [

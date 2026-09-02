@@ -222,9 +222,14 @@ class ManualDismissalTests(unittest.TestCase):
         self.assertEqual(result, {"result": "success"})
         self.assertEqual(manager.led_service.updates, [(1, "123")])
 
-    def test_valid_administrative_class_swipe_updates_led(self):
+    def test_hidden_led_grade_swipe_still_queues_voice_and_led_status(self):
         manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
-        manager.config = FakeConfig()
+        manager.config = FakeConfig(
+            {
+                "led_grade_filter_mode": "selected",
+                "led_visible_grades": ["二年级"],
+            }
+        )
         manager.voice_history = {}
         manager.api_push_history = {}
 

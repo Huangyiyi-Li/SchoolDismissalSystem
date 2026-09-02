@@ -109,6 +109,202 @@ class FakeOperationLogger:
 
 
 class LedServiceTests(unittest.TestCase):
+    def test_selected_grade_filter_only_reaches_admin_renderer_and_keeps_clubs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            db.upsert_led_class(
+                "40125", 1, "201", "二年级", "二年级一班", source_order=1
+            )
+            db.upsert_led_class(
+                "40125", 2, "301", "", "足球社团", source_order=0
+            )
+            service = LedService(
+                FakeConfig(
+                    {
+                        "school_id": "40125",
+                        "led_grade_filter_mode": "selected",
+                        "led_visible_grades": ["二年级"],
+                    }
+                ),
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+            classes_by_type = {
+                class_type: db.get_led_classes("40125", class_type=class_type)
+                for class_type in (1, 2)
+            }
+
+            with patch(
+                "src.services.led_service.render_led_pages", return_value=[]
+            ) as render_admin, patch(
+                "src.services.led_service.render_club_led_pages", return_value=[]
+            ) as render_club:
+                service._render_pages_for_types(
+                    classes_by_type, {}, Path(tmpdir) / "pages"
+                )
+
+            rendered_admin_classes = render_admin.call_args.args[1]
+            self.assertEqual(
+                [item["grade_name"] for item in rendered_admin_classes],
+                ["二年级"],
+            )
+            self.assertEqual(
+                [item["class_name"] for item in render_club.call_args.args[1]],
+                ["足球社团"],
+            )
+
+    def test_preview_grade_filter_can_use_unsaved_dialog_selection(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            db.upsert_led_class(
+                "40125", 1, "201", "二年级", "二年级一班", source_order=1
+            )
+            service = LedService(
+                FakeConfig({"school_id": "40125"}),
+                db,
+                bridge=FakeBridge(),
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+
+            with patch(
+                "src.services.led_service.render_led_pages", return_value=[]
+            ) as render_admin:
+                service.render_preview_pages(
+                    Path(tmpdir) / "preview",
+                    width=1024,
+                    height=96,
+                    grades_per_page=2,
+                    regions_per_page=1,
+                    show_title=True,
+                    title="放学系统",
+                    grade_filter_mode="selected",
+                    visible_grades=["二年级"],
+                )
+
+            self.assertEqual(
+                [item["grade_name"] for item in render_admin.call_args.args[1]],
+                ["二年级"],
+            )
+
+    def test_hidden_grade_status_is_kept_without_resending_unchanged_led_page(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = self.make_db(tmpdir)
+            db.upsert_led_class(
+                "40125", 1, "201", "二年级", "二年级一班", source_order=1
+            )
+            bridge = FakeBridge()
+            timers = FakeTimerFactory()
+            service = LedService(
+                FakeConfig(
+                    {
+                        "school_id": "40125",
+                        "led_grade_filter_mode": "selected",
+                        "led_visible_grades": ["一年级"],
+                    }
+                ),
+                db,
+                bridge=bridge,
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+                timer_factory=timers,
+            )
+
+            service.mark_dismissing("201", class_type=1)
+
+            self.assertEqual(service.get_status("201", class_type=1), "放学中")
+            self.assertEqual(bridge.displays, [])
+            timers.timers[0].fire()
+            self.assertEqual(service.get_status("201", class_type=1), "已放学")
+            self.assertEqual(bridge.displays, [])
+
+    def test_selected_grade_missing_after_sync_clears_previous_led_page(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = FakeConfig({"school_id": "40125"})
+            bridge = FakeBridge()
+            service = LedService(
+                config,
+                self.make_db(tmpdir),
+                bridge=bridge,
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+            service.refresh()
+            config.values.update(
+                {
+                    "led_grade_filter_mode": "selected",
+                    "led_visible_grades": ["已删除年级"],
+                }
+            )
+
+            result = service.refresh()
+
+            self.assertTrue(result.ok)
+            self.assertEqual(bridge.clears, [("192.168.100.1", 5005)])
+
+    def test_selected_grade_test_screen_uses_fallback_rows_when_catalog_is_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = FakeConfig(
+                {
+                    "school_id": "40125",
+                    "led_grade_filter_mode": "selected",
+                    "led_visible_grades": ["一年级", "二年级"],
+                }
+            )
+            bridge = FakeBridge()
+            service = LedService(
+                config,
+                DatabaseManager(os.path.join(tmpdir, "school.db")),
+                bridge=bridge,
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+
+            with patch(
+                "src.services.led_service.render_led_pages",
+                return_value=[Path(tmpdir) / "fallback.bmp"],
+            ) as render_admin:
+                result = service.send_test_screen()
+
+            self.assertTrue(result.ok)
+            self.assertEqual(
+                {item["grade_name"] for item in render_admin.call_args.args[1]},
+                {"一年级", "二年级"},
+            )
+            self.assertEqual(len(bridge.displays), 1)
+
+    def test_selected_grade_test_screen_uses_fallback_when_catalog_has_only_other_grades(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = FakeConfig(
+                {
+                    "school_id": "40125",
+                    "led_grade_filter_mode": "selected",
+                    "led_visible_grades": ["七年级"],
+                }
+            )
+            bridge = FakeBridge()
+            service = LedService(
+                config,
+                self.make_db(tmpdir),
+                bridge=bridge,
+                output_dir=Path(tmpdir) / "pages",
+                submitter=lambda task: task(),
+            )
+
+            with patch(
+                "src.services.led_service.render_led_pages",
+                return_value=[Path(tmpdir) / "fallback.bmp"],
+            ) as render_admin:
+                result = service.send_test_screen()
+
+            self.assertTrue(result.ok)
+            self.assertEqual(
+                {item["grade_name"] for item in render_admin.call_args.args[1]},
+                {"七年级"},
+            )
+
     def test_dual_color_setting_reaches_bridge_and_renders_rgb_page(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bridge = FakeBridge()

@@ -78,6 +78,70 @@ class LedService:
     def _status_key(class_id, class_type=1):
         return (int(class_type or 1), str(class_id or "").strip())
 
+    @staticmethod
+    def _normalize_visible_grades(values):
+        if not isinstance(values, (list, tuple, set)):
+            return []
+        normalized = []
+        for value in values:
+            grade_name = str(value or "").strip()
+            if grade_name and grade_name not in normalized:
+                normalized.append(grade_name)
+        return normalized
+
+    def get_available_admin_grades(self, school_id=None):
+        school_id = school_id or self.config.get("school_id")
+        grades = []
+        for item in self.db.get_led_classes(school_id, class_type=1):
+            grade_name = str(item.get("grade_name") or "").strip()
+            if grade_name and grade_name not in grades:
+                grades.append(grade_name)
+        return grades
+
+    def _filter_classes_by_grades(
+        self,
+        classes_by_type,
+        grade_filter_mode=None,
+        visible_grades=None,
+    ):
+        mode = (
+            grade_filter_mode
+            if grade_filter_mode is not None
+            else self.config.get("led_grade_filter_mode", "all")
+        )
+        if mode != "selected":
+            return classes_by_type
+        configured_grades = (
+            visible_grades
+            if visible_grades is not None
+            else self.config.get("led_visible_grades", [])
+        )
+        selected = set(self._normalize_visible_grades(configured_grades))
+        filtered = dict(classes_by_type)
+        filtered[1] = [
+            item
+            for item in (classes_by_type.get(1) or [])
+            if str(item.get("grade_name") or "").strip() in selected
+        ]
+        return filtered
+
+    def _class_status_affects_led(self, class_id, class_type):
+        class_type = int(class_type or 1)
+        if class_type != 1:
+            return True
+        if self.config.get("led_grade_filter_mode", "all") != "selected":
+            return True
+        selected = set(
+            self._normalize_visible_grades(
+                self.config.get("led_visible_grades", [])
+            )
+        )
+        class_id = str(class_id or "").strip()
+        for item in self.db.get_led_classes(self._school_id(), class_type=1):
+            if str(item.get("class_id") or "").strip() == class_id:
+                return str(item.get("grade_name") or "").strip() in selected
+        return False
+
     def _active_statuses_locked(self):
         return self._test_statuses if self._test_mode else self._statuses
 
@@ -238,7 +302,7 @@ class LedService:
             timer = self._make_status_timer(delay, key, self._test_mode)
             self._status_timers[timer_key] = timer
             timer.start()
-        if changed:
+        if changed and self._class_status_affects_led(class_id, class_type):
             self.refresh_async()
         return True
 
@@ -274,7 +338,9 @@ class LedService:
                 self._persist_status_locked(
                     key[1], self.STATUS_DISMISSED, class_type=key[0]
                 )
-        if self._test_mode == test_mode:
+        if self._test_mode == test_mode and self._class_status_affects_led(
+            key[1], key[0]
+        ):
             self.refresh_async()
 
     def set_class_status(self, class_id, status, class_type=1):
@@ -300,7 +366,8 @@ class LedService:
                 statuses.pop(key, None)
                 if not self._test_mode:
                     self._delete_persisted_status_locked(class_id, class_type=class_type)
-        self.refresh_async()
+        if self._class_status_affects_led(class_id, class_type):
+            self.refresh_async()
 
     def set_test_mode(self, enabled):
         enabled = bool(enabled)
@@ -521,6 +588,7 @@ class LedService:
             class_type: self.db.get_led_classes(school_id, class_type=class_type)
             for class_type in active_types
         }
+        classes_by_type = self._filter_classes_by_grades(classes_by_type)
         if not any(classes_by_type.values()):
             _, generation = self._stop_display_session()
             with self._operation_lock:
@@ -580,6 +648,8 @@ class LedService:
         title_font_size=None,
         header_font_size=None,
         cell_font_size=None,
+        grade_filter_mode=None,
+        visible_grades=None,
     ):
         width = int(width if width is not None else self.config.get("led_width", 1024))
         height = int(height if height is not None else self.config.get("led_height", 96))
@@ -632,6 +702,11 @@ class LedService:
             cell_font_size
             if cell_font_size is not None
             else self.config.get("led_cell_font_size", 0)
+        )
+        classes_by_type = self._filter_classes_by_grades(
+            classes_by_type,
+            grade_filter_mode=grade_filter_mode,
+            visible_grades=visible_grades,
         )
         pages = []
         for class_type in (1, 2):
@@ -692,6 +767,8 @@ class LedService:
         title_font_size=None,
         header_font_size=None,
         cell_font_size=None,
+        grade_filter_mode=None,
+        visible_grades=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -729,6 +806,8 @@ class LedService:
                 title_font_size=title_font_size,
                 header_font_size=header_font_size,
                 cell_font_size=cell_font_size,
+                grade_filter_mode=grade_filter_mode,
+                visible_grades=visible_grades,
             )
 
     def test_connection(self, ip=None, port=None):
@@ -852,23 +931,52 @@ class LedService:
         title_font_size=None,
         header_font_size=None,
         cell_font_size=None,
+        grade_filter_mode=None,
+        visible_grades=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
             class_type: self.db.get_led_classes(school_id, class_type=class_type)
             for class_type in (1, 2)
         }
-        if not any(classes_by_type.values()):
+        effective_filter_mode = (
+            grade_filter_mode
+            if grade_filter_mode is not None
+            else self.config.get("led_grade_filter_mode", "all")
+        )
+        effective_visible_grades = self._normalize_visible_grades(
+            visible_grades
+            if visible_grades is not None
+            else self.config.get("led_visible_grades", [])
+        )
+        filtered_classes = self._filter_classes_by_grades(
+            classes_by_type,
+            grade_filter_mode=effective_filter_mode,
+            visible_grades=effective_visible_grades,
+        )
+        fallback_grades = []
+        if (
+            effective_filter_mode == "selected"
+            and effective_visible_grades
+            and not filtered_classes.get(1)
+        ):
+            fallback_grades = effective_visible_grades
+        elif not any(classes_by_type.values()):
+            fallback_grades = ["测试"]
+        if fallback_grades:
+            fallback_count = max(3, len(fallback_grades))
             classes_by_type[1] = [
                 {
                     "class_id": f"LED-TEST-{index}",
                     "class_type": 1,
-                    "grade_name": "测试",
+                    "grade_name": fallback_grades[
+                        (index - 1) % len(fallback_grades)
+                    ],
                     "class_name": f"测试{index}班",
                     "class_show_name": f"{index}班",
                     "source_order": index - 1,
                 }
-                for index in range(1, 4)
+                for index in range(1, fallback_count + 1)
             ]
         statuses = {}
         index = 0
@@ -908,6 +1016,8 @@ class LedService:
                 title_font_size=title_font_size,
                 header_font_size=header_font_size,
                 cell_font_size=cell_font_size,
+                grade_filter_mode=grade_filter_mode,
+                visible_grades=visible_grades,
             )
             result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),
