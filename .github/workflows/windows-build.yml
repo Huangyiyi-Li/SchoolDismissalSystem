@@ -124,6 +124,15 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      - name: Prepare checksums for Release download names
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        shell: pwsh
+        run: |
+          python -m tools.prepare_release_checksums
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to prepare Release checksums"
+          }
+
       - name: Publish GitHub pre-release
         if: ${{ startsWith(github.ref, 'refs/tags/') && contains(steps.app_info.outputs.version, '-') }}
         env:
