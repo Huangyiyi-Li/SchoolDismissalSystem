@@ -18,6 +18,19 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS credential_aliases (
+                school_id TEXT NOT NULL,
+                credential_type TEXT NOT NULL,
+                credential_value TEXT NOT NULL,
+                api_card_id TEXT NOT NULL,
+                class_id TEXT NOT NULL,
+                class_type INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (school_id, credential_type, credential_value)
+            )
+        """)
+
         # Mapping table: Card ID -> Class Name
         # Added class_id for API support
         # Added school_id for multi-school support (Request)
@@ -562,3 +575,45 @@ class DatabaseManager:
                 }
             )
         return records
+
+    def bind_credential(self, school_id, epc, api_card_id):
+        from .services.readers.uhf_protocol import normalize_epc
+        epc = normalize_epc(epc)
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT class_id, class_type FROM mapping WHERE card_id=? AND school_id=?",
+                (api_card_id, str(school_id)),
+            ).fetchone()
+            if not row or not row[0] or row[1] is None:
+                raise ValueError("请选择当前学校已同步的班级卡号")
+            conn.execute(
+                "INSERT INTO credential_aliases "
+                "(school_id,credential_type,credential_value,api_card_id,class_id,class_type) "
+                "VALUES (?, 'uhf_epc', ?, ?, ?, ?)",
+                (str(school_id), epc, api_card_id, str(row[0]), int(row[1])),
+            )
+
+    def resolve_credential(self, school_id, epc):
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("""
+                SELECT a.api_card_id FROM credential_aliases a JOIN mapping m
+                ON m.card_id=a.api_card_id AND m.school_id=a.school_id
+                AND m.class_id=a.class_id AND m.class_type=a.class_type
+                WHERE a.school_id=? AND a.credential_type='uhf_epc' AND a.credential_value=?
+            """, (str(school_id), epc)).fetchone()
+        return row[0] if row else None
+
+    def list_credentials(self, school_id):
+        with sqlite3.connect(self.db_path) as conn:
+            return conn.execute("""
+                SELECT a.credential_value,a.api_card_id,COALESCE(m.class_name,'绑定已失效')
+                FROM credential_aliases a LEFT JOIN mapping m
+                ON m.card_id=a.api_card_id AND m.school_id=a.school_id
+                AND m.class_id=a.class_id AND m.class_type=a.class_type
+                WHERE a.school_id=? ORDER BY a.created_at,a.credential_value
+            """, (str(school_id),)).fetchall()
+
+    def delete_credential(self, school_id, epc):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM credential_aliases WHERE school_id=? AND "
+                         "credential_type='uhf_epc' AND credential_value=?", (str(school_id), epc))

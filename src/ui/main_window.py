@@ -137,7 +137,7 @@ class MainWindow(QMainWindow):
         manage_action.triggered.connect(self.open_mapping_dialog)
         toolbar.addAction(manage_action)
 
-        config_action = QAction("绑定学校", self)
+        config_action = QAction("系统设置", self)
         config_action.triggered.connect(self.open_settings_dialog)
         toolbar.addAction(config_action)
         
@@ -230,7 +230,7 @@ class MainWindow(QMainWindow):
 
     def connect_signals(self):
         # UDP Signals
-        self.udp_server.card_swiped.connect(self.broadcast_manager.process_swipe)
+        self.udp_server.credential_received.connect(self.broadcast_manager.process_credential)
         
         # Broadcast Signals
         self.broadcast_manager.log_updated.connect(self.add_log)
@@ -249,6 +249,7 @@ class MainWindow(QMainWindow):
             self.data_sync_service,
             led_service=self.led_service,
             parent=self,
+            reader_manager=self.udp_server,
         )
         dialog.exec()
 

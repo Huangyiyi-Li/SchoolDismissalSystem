@@ -174,7 +174,24 @@ class BroadcastManager(QObject):
             class_type=class_type,
         )
 
+    def process_credential(self, event):
+        if event.credential_type == 'legacy_card':
+            self.process_swipe(event.credential_id, event.reader_ip)
+            return
+        if event.credential_type != 'uhf_epc':
+            return
+        card_id = self.db.resolve_credential(self.config.get('school_id'), event.credential_id)
+        detail = f"{event.credential_id} / {event.reader_id} / {event.reader_ip}"
+        if not card_id:
+            self._log_event(event.credential_id, "未知", "跳过", "标签未绑定或绑定已失效",
+                            source="超高频标签", source_detail=detail)
+            return
+        self._process_card(card_id, event.reader_ip, "超高频标签", detail)
+
     def process_swipe(self, card_id, ip):
+        self._process_card(card_id, ip)
+
+    def _process_card(self, card_id, ip, source="刷卡", source_detail=None):
         # 1. Lookup Class (FIRST)
         class_info = self.db.get_class_info_by_card(card_id)
         class_name = class_info[0]
@@ -187,8 +204,8 @@ class BroadcastManager(QObject):
                 "未知",
                 "跳过",
                 "无效卡号",
-                source="刷卡",
-                source_detail=card_id,
+                source=source,
+                source_detail=source_detail or card_id,
             )
             return
 
@@ -205,8 +222,8 @@ class BroadcastManager(QObject):
                 "跳过",
                 "非播报时段",
                 class_type=class_type,
-                source="刷卡",
-                source_detail=card_id,
+                source=source,
+                source_detail=source_detail or card_id,
             )
             return
 
@@ -279,8 +296,8 @@ class BroadcastManager(QObject):
             action,
             reason,
             class_type=class_type,
-            source="刷卡",
-            source_detail=card_id,
+            source=source,
+            source_detail=source_detail or card_id,
         )
 
     def process_manual_dismissal(self, params):

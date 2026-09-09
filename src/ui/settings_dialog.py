@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QMessageBox, QFormLayout,
                              QCheckBox, QPlainTextEdit, QGroupBox, QWidget,
                              QScrollArea, QFrame, QComboBox, QSpinBox,
-                             QDoubleSpinBox, QGridLayout)
+                             QDoubleSpinBox, QGridLayout, QListWidget, QStackedWidget, QTabWidget)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from ..services.device_identity import format_device_no_from_node, normalize_device_no
@@ -30,14 +30,16 @@ class SettingsDialog(QDialog):
         data_sync_service=None,
         led_service=None,
         parent=None,
+        reader_manager=None,
     ):
         super().__init__(parent)
+        self.reader_manager = reader_manager
         self.config = config_manager
         self.sync_service = data_sync_service
         self.led_service = led_service
         self._led_action_running = False
         self._closing = False
-        self.setWindowTitle("绑定学校")
+        self.setWindowTitle("系统设置")
         self.resize(1120, 720)
         self._preview_pages = []
         self._preview_index = 0
@@ -52,11 +54,46 @@ class SettingsDialog(QDialog):
         self.setup_ui()
 
     def setup_ui(self):
-        layout = QHBoxLayout(self)
+        root = QVBoxLayout(self)
+        body = QHBoxLayout()
+        root.addLayout(body, 1)
+        self.navigation = QListWidget()
+        self.navigation.addItems(['学校绑定', '读卡设备', '语音播报', 'LED 屏', '高级设置'])
+        self.navigation.setFixedWidth(138)
+        self.navigation.setSpacing(6)
+        self.pages = QStackedWidget()
+        body.addWidget(self.navigation)
+        body.addWidget(self.pages, 1)
+        page_layouts = []
+        for title in ['学校绑定', '读卡设备', '语音播报', 'LED 屏', '高级设置']:
+            page = QWidget()
+            outer = QVBoxLayout(page)
+            heading = QLabel(title)
+            heading.setStyleSheet('font-size:20px;font-weight:600;margin-bottom:12px;')
+            outer.addWidget(heading)
+            content = QWidget()
+            content_layout = QVBoxLayout(content)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(content)
+            outer.addWidget(scroll)
+            self.pages.addWidget(page)
+            page_layouts.append(content_layout)
+        self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.navigation.setCurrentRow(0)
+        school_layout, reader_layout, voice_layout, led_page_layout, advanced_layout = page_layouts
+        from .reader_settings import ReaderSettings
+        db = getattr(self.sync_service, 'db', None)
+        self.reader_panel = ReaderSettings(self.config, db, self.reader_manager)
+        reader_layout.addWidget(self.reader_panel)
+        self.finished.connect(lambda _: self.reader_panel.cleanup())
+        layout = QHBoxLayout()
+        led_page_layout.addLayout(layout)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-
         form_layout = QFormLayout()
+        advanced_form = QFormLayout()
         
         # School ID
         self.school_id_edit = QLineEdit()
@@ -67,7 +104,7 @@ class SettingsDialog(QDialog):
         self.api_base_url_edit = QLineEdit()
         self.api_base_url_edit.setText(self.config.get("api_base_url", "https://rest.xxt.cn"))
         self.api_base_url_edit.setPlaceholderText("https://rest.xxt.cn 或 https://rest-test.xxt.cn")
-        form_layout.addRow("接口地址:", self.api_base_url_edit)
+        advanced_form.addRow("接口地址:", self.api_base_url_edit)
 
         self.device_no_edit = QLineEdit()
         self.device_no_edit.setText(normalize_device_no(self.config.get("device_no", "")))
@@ -77,21 +114,24 @@ class SettingsDialog(QDialog):
         generate_device_no_btn = QPushButton("一键获取")
         generate_device_no_btn.clicked.connect(self.fill_local_device_no)
         device_no_layout.addWidget(generate_device_no_btn)
-        form_layout.addRow("设备编号:", device_no_layout)
+        advanced_form.addRow("设备编号:", device_no_layout)
 
         self.mqtt_enabled_check = QCheckBox("启用 MQTT 心跳/指令")
         self.mqtt_enabled_check.setChecked(self.config.get("mqtt_enabled", True))
-        form_layout.addRow("MQTT:", self.mqtt_enabled_check)
+        advanced_form.addRow("MQTT:", self.mqtt_enabled_check)
         
-        # UDP Port
-        self.port_edit = QLineEdit()
-        self.port_edit.setText(str(self.config.get("udp_port", 39169)))
-        form_layout.addRow("UDP 端口:", self.port_edit)
-
-        # Removed manual time settings as per requirement
-        # Time is now managed via Server Schedule
-
-        left_layout.addLayout(form_layout)
+        self.port_edit = self.reader_panel.near_port
+        school_layout.addLayout(form_layout)
+        school_hint = QLabel('填写学校 ID 后保存，系统会同步班级和放学时段。更换学校会重新同步数据。')
+        school_hint.setWordWrap(True)
+        school_layout.addWidget(school_hint)
+        if self.sync_service:
+            sync_btn = QPushButton('同步已保存学校的数据')
+            sync_btn.clicked.connect(self.trigger_sync)
+            school_layout.addWidget(sync_btn)
+        school_layout.addStretch()
+        advanced_layout.addLayout(advanced_form)
+        advanced_layout.addStretch()
 
         voice_group = QGroupBox("语音播报")
         voice_form = QFormLayout(voice_group)
@@ -140,7 +180,8 @@ class SettingsDialog(QDialog):
         voice_hint.setWordWrap(True)
         voice_hint.setStyleSheet("color:#6b7280;font-size:12px;")
         voice_form.addRow("", voice_hint)
-        left_layout.addWidget(voice_group)
+        voice_layout.addWidget(voice_group)
+        voice_layout.addStretch()
 
         led_group = QGroupBox("LED 屏（仰邦 BX-6E1XP）")
         led_form = QFormLayout(led_group)
@@ -319,7 +360,7 @@ class SettingsDialog(QDialog):
         self.led_font_size_hint.setStyleSheet("color:#6b7280;font-size:12px;")
         led_form.addRow("", self.led_font_size_hint)
 
-        led_test_layout = QHBoxLayout()
+        led_test_layout = QVBoxLayout()
         self.led_connect_btn = QPushButton("测试连接")
         self.led_connect_btn.clicked.connect(self.test_led_connection)
         led_test_layout.addWidget(self.led_connect_btn)
@@ -330,7 +371,37 @@ class SettingsDialog(QDialog):
         self.led_restore_btn.clicked.connect(self.reset_led_screen)
         led_test_layout.addWidget(self.led_restore_btn)
         led_form.addRow("设备测试:", led_test_layout)
-        left_layout.addWidget(led_group)
+        # Keep controls in task-specific groups while retaining their existing signals.
+        self.led_tabs = QTabWidget()
+        led_forms = []
+        for title in ['连接', '内容', '样式']:
+            tab = QWidget()
+            tab_layout = QVBoxLayout(tab)
+            form = QFormLayout()
+            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+            tab_layout.addLayout(form)
+            tab_layout.addStretch()
+            self.led_tabs.addTab(tab, title)
+            led_forms.append(form)
+        group_index = 0
+        while led_form.rowCount():
+            row = led_form.takeRow(0)
+            label = row.labelItem.widget() if row.labelItem else None
+            field = row.fieldItem.widget() or row.fieldItem.layout()
+            text = label.text() if label else ''
+            if text == '翻页间隔(秒):':
+                group_index = 1
+            elif text == '标题区域:':
+                group_index = 2
+            elif text == '设备测试:':
+                group_index = 0
+            if label:
+                led_forms[group_index].addRow(label, field)
+            else:
+                led_forms[group_index].addRow(field)
+        led_group.deleteLater()
+        left_layout.addWidget(self.led_tabs)
 
         # Buttons
         btn_layout = QHBoxLayout()
@@ -343,17 +414,13 @@ class SettingsDialog(QDialog):
         self.cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self.cancel_btn)
         
-        if self.sync_service:
-            sync_btn = QPushButton("立即同步数据")
-            sync_btn.clicked.connect(self.trigger_sync)
-            btn_layout.addWidget(sync_btn)
-
-        left_layout.addLayout(btn_layout)
+        btn_layout.insertStretch(0, 1)
+        root.addLayout(btn_layout)
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.Shape.NoFrame)
         left_scroll.setWidget(left_widget)
-        layout.addWidget(left_scroll, stretch=4)
+        layout.addWidget(left_scroll, stretch=5)
 
         preview_group = QGroupBox("LED 内容预览（本地预览，不会发送到控制卡）")
         preview_layout = QVBoxLayout(preview_group)
@@ -366,7 +433,7 @@ class SettingsDialog(QDialog):
         self.preview_scroll = QScrollArea()
         self.preview_scroll.setWidgetResizable(False)
         self.preview_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_scroll.setMinimumSize(560, 260)
+        self.preview_scroll.setMinimumSize(360, 260)
         self.preview_scroll.setStyleSheet(
             "QScrollArea{background:#050000;border:1px solid #374151;}"
             "QScrollBar{background:#1f2937;}"
@@ -397,6 +464,7 @@ class SettingsDialog(QDialog):
         zoom_controls.addWidget(QLabel("预览缩放:"))
         self.preview_zoom_out_btn = QPushButton("－")
         self.preview_zoom_out_btn.setToolTip("缩小预览")
+        self.preview_zoom_out_btn.setFixedWidth(30)
         self.preview_zoom_out_btn.clicked.connect(self.zoom_preview_out)
         zoom_controls.addWidget(self.preview_zoom_out_btn)
         self.preview_zoom_label = QLabel("100%")
@@ -404,6 +472,7 @@ class SettingsDialog(QDialog):
         self.preview_zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         zoom_controls.addWidget(self.preview_zoom_label)
         self.preview_zoom_in_btn = QPushButton("＋")
+        self.preview_zoom_in_btn.setFixedWidth(30)
         self.preview_zoom_in_btn.setToolTip("放大预览")
         self.preview_zoom_in_btn.clicked.connect(self.zoom_preview_in)
         zoom_controls.addWidget(self.preview_zoom_in_btn)
@@ -421,7 +490,7 @@ class SettingsDialog(QDialog):
         self.preview_sample_check.setChecked(True)
         self.preview_sample_check.toggled.connect(self.mark_led_preview_stale)
         preview_layout.addWidget(self.preview_sample_check)
-        layout.addWidget(preview_group, stretch=6)
+        layout.addWidget(preview_group, stretch=5)
 
         for editor in (
             self.led_width_edit,
@@ -468,12 +537,15 @@ class SettingsDialog(QDialog):
 
         try:
             port = int(port_str)
-        except ValueError:
-            QMessageBox.warning(self, "错误", "UDP 端口必须是数字")
+            reader_values = self.reader_panel.values()
+        except ValueError as exc:
+            self.navigation.setCurrentRow(1)
+            QMessageBox.warning(self, "错误", str(exc))
             return
 
         led_values = self._get_led_values()
         if led_values is None:
+            self.navigation.setCurrentRow(3)
             return
 
         # Check if School ID changed
@@ -496,6 +568,8 @@ class SettingsDialog(QDialog):
         self.config.set("api_base_url", api_base_url or "https://rest.xxt.cn")
         self.config.set("device_no", device_no)
         self.config.set("mqtt_enabled", self.mqtt_enabled_check.isChecked())
+        old_readers = self.reader_panel.original
+        self.config.set("readers", reader_values)
         self.config.set("udp_port", port)
         self.config.set(
             "tts_rate",
@@ -537,6 +611,9 @@ class SettingsDialog(QDialog):
             self.sync_service.api.base_url = self.config.get("api_base_url", "https://rest.xxt.cn")
         
         msg = "设置已保存。"
+        if self.reader_manager and old_readers != reader_values:
+            if not self.reader_manager.restart():
+                msg += "\n部分读卡设备未启动，请检查端口占用：\n" + "\n".join(self.reader_manager.statuses)
         if self.led_service and old_led_enabled and (
             not new_led_enabled or led_target_changed or school_id_changed
         ):
@@ -572,7 +649,7 @@ class SettingsDialog(QDialog):
             # Apply current text just in case (though save should handle it)
             # Now self.sync_service.api should work thanks to property
             if hasattr(self.sync_service, 'api') and self.sync_service.api:
-                self.sync_service.api.school_id = self.school_id_edit.text().strip()
+                self.sync_service.api.school_id = self.config.get('school_id', '')
 
             # Call force_sync which emits signal to worker thread
             if hasattr(self.sync_service, 'force_sync'):

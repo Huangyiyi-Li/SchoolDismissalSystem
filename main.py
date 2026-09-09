@@ -7,10 +7,10 @@ src_dir = os.path.join(current_dir, 'src')
 sys.path.insert(0, src_dir)
 
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 from src.app_info import APP_NAME, APP_VERSION
 from src.services.config_manager import ConfigManager
-from src.services.udp_server import UDPServerService
+from src.services.readers.reader_manager import ReaderManager
 from src.services.broadcast_manager import BroadcastManager
 from src.services.led_service import LedService
 from src.services.operation_log import default_operation_logger
@@ -93,7 +93,7 @@ def main():
         )
         mqtt_service.start()
     # Pass db_manager to UDPServer for device management
-    udp_server = UDPServerService(port=config_manager.get("udp_port", 39169), db_manager=db_manager)
+    udp_server = ReaderManager(config_manager, db_manager)
     
     # Initialize UI
     window = MainWindow(
@@ -108,7 +108,7 @@ def main():
     
     # Start Services
     if not udp_server.start():
-        print("Error: Could not bind UDP port.")
+        QMessageBox.warning(window, "读卡设备启动失败", "\n".join(udp_server.statuses))
     
     # Execution
     exit_code = app.exec()
