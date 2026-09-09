@@ -3,3 +3,4 @@ pyttsx3
 requests
 paho-mqtt
 Pillow
+pytest
