@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import re
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -142,7 +143,7 @@ def _load_font(size):
     return ImageFont.load_default()
 
 
-def _fit_font(draw, text, max_width, max_height, preferred=20, minimum=8):
+def _fit_font(draw, text, max_width, max_height, preferred=20, minimum=1):
     preferred = max(1, int(preferred))
     minimum = max(1, min(preferred, int(minimum)))
     for size in range(preferred, minimum - 1, -1):
@@ -161,6 +162,10 @@ def _draw_centered(draw, box, text, preferred=20, fill=1):
     bounds = draw.textbbox((0, 0), text, font=font)
     text_width = bounds[2] - bounds[0]
     text_height = bounds[3] - bounds[1]
+    if text_width > x2 - x1 - 2 or text_height > y2 - y1 - 2:
+        # Even a one-pixel font can exceed an extremely small cell. Never
+        # paint a status into a neighbouring class or over its grid lines.
+        return
     x = x1 + ((x2 - x1) - text_width) / 2 - bounds[0]
     y = y1 + ((y2 - y1) - text_height) / 2 - bounds[1]
     draw.text((x, y), text, font=font, fill=fill)
@@ -252,8 +257,10 @@ def _draw_centered_club_name(
     x1, y1, x2, y2 = box
     max_width = max(1, x2 - x1 - 4)
     max_height = max(1, y2 - y1 - 2)
+    preferred = max(1, int(preferred))
+    minimum = max(1, min(preferred, int(minimum)))
 
-    for size in range(preferred, max(10, minimum) - 1, -1):
+    for size in range(preferred, min(preferred, max(10, minimum)) - 1, -1):
         font = _load_font(size)
         widths, heights = _line_metrics(draw, [text], font)
         if widths[0] <= max_width and heights[0] <= max_height:
@@ -294,6 +301,17 @@ def _status_for(statuses, item):
     class_id = str(item.get("class_id") or "")
     class_type = int(item.get("class_type") or 1)
     return statuses.get((class_type, class_id), statuses.get(class_id, ""))
+
+
+def _class_header(item):
+    """Use the supplied class identity, never the position in the catalog."""
+    label = str(item.get("class_show_name") or item.get("class_name") or item.get("class_id") or "").strip()
+    grade = str(item.get("grade_name") or "").strip()
+    if grade and label.startswith(grade):
+        label = label[len(grade):].strip()
+    # Common service labels include 一(3)班 and 一（3）班.
+    number = re.search(r"[（(](\d+)[）)]班?$", label)
+    return f"{int(number.group(1))}班" if number else label
 
 
 def render_led_pages(
@@ -380,7 +398,12 @@ def render_led_pages(
                 fill=layout_color,
             )
 
-            region_columns = max((len(row.classes) for row in rows), default=1)
+            headers = list(dict.fromkeys(
+                "状态" if int(class_type or 1) == 2 else _class_header(item)
+                for row in rows for item in row.classes
+            ))
+            region_columns = len(headers)
+            header_columns = {header: index for index, header in enumerate(headers)}
             class_width = max(1, (region_x2 - data_x1) / region_columns)
             for column in range(1, region_columns):
                 x = round(data_x1 + class_width * column)
@@ -392,7 +415,7 @@ def render_led_pages(
             for column in range(region_columns):
                 x1 = round(data_x1 + class_width * column)
                 x2 = round(data_x1 + class_width * (column + 1))
-                header = "状态" if int(class_type or 1) == 2 else f"{column + 1}班"
+                header = headers[column]
                 _draw_centered(
                     draw, (x1, 0, x2, header_height), header,
                     preferred=header_preferred, fill=layout_color,
@@ -412,7 +435,9 @@ def render_led_pages(
                     preferred=header_preferred,
                     fill=layout_color,
                 )
-                for column, item in enumerate(row.classes):
+                for item in row.classes:
+                    header = "状态" if int(class_type or 1) == 2 else _class_header(item)
+                    column = header_columns[header]
                     x1 = round(data_x1 + class_width * column)
                     x2 = round(data_x1 + class_width * (column + 1))
                     raw_status = _status_for(statuses, item)
