@@ -1,6 +1,6 @@
 # 超高频接入与新版设置：测试说明
 
-本版基于 `codex/LED` 开发，分支 `codex/uhf-readers-settings`，版本为 `v2.1.0-beta.14`。尚未进行 Windows 真机或读卡器硬件验收，也未生成 Windows 安装包。
+本版基于 `codex/LED` 开发，分支 `codex/uhf-readers-settings`，版本为 `v2.1.0-beta.15`。尚未进行 Windows 真机或读卡器硬件验收，也未生成 Windows 安装包。
 
 ## 没有设备，现在怎么试
 
