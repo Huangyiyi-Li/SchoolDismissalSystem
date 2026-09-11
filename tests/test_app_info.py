@@ -14,20 +14,20 @@ from src.app_info import (
 class AppInfoTests(unittest.TestCase):
     def test_product_and_build_names_share_single_version(self):
         self.assertEqual(APP_NAME, "数智家校放学系统")
-        self.assertEqual(APP_VERSION, "2.1.0-beta.15")
-        self.assertEqual(APP_VERSION_LABEL, "版本 v2.1.0-beta.15")
+        self.assertEqual(APP_VERSION, "2.1.0-beta.16")
+        self.assertEqual(APP_VERSION_LABEL, "版本 v2.1.0-beta.16")
         self.assertEqual(WINDOWS_EXE_NAME, "数智家校放学系统.exe")
         self.assertEqual(
             WINDOWS_ZIP_NAME,
-            "数智家校放学系统-v2.1.0-beta.15-windows-x64.zip",
+            "数智家校放学系统-v2.1.0-beta.16-windows-x64.zip",
         )
         self.assertEqual(
             WINDOWS_SHA256_NAME,
-            "数智家校放学系统-v2.1.0-beta.15-windows-x64.zip.sha256",
+            "数智家校放学系统-v2.1.0-beta.16-windows-x64.zip.sha256",
         )
         self.assertEqual(
             WINDOWS_SETUP_NAME,
-            "数智家校放学系统-v2.1.0-beta.15-setup-x64.exe",
+            "数智家校放学系统-v2.1.0-beta.16-setup-x64.exe",
         )
 
 

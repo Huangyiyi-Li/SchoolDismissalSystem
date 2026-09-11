@@ -50,7 +50,7 @@ class ReaderSettings(QWidget):
         layout.addWidget(group)
         binding = QGroupBox('超高频标签绑定')
         bf = QVBoxLayout(binding)
-        bf.addWidget(QLabel('先采集或粘贴标签，再选择班级。绑定单独保存，学校同步不会清除。'))
+        bf.addWidget(QLabel('4 字节标签自动转十进制匹配当前学校卡号；也可采集后手工绑定，手工绑定优先。'))
         self.capture = QPushButton('开始采集标签'); self.capture.setCheckable(True)
         self.capture.toggled.connect(self._capture)
         bf.addWidget(self.capture)

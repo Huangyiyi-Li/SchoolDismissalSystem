@@ -596,14 +596,31 @@ class DatabaseManager:
             conn.commit()
 
     def resolve_credential(self, school_id, epc):
+        from .services.readers.uhf_protocol import normalize_epc
+        try:
+            epc = normalize_epc(epc)
+        except ValueError:
+            return None
         with closing(sqlite3.connect(self.db_path)) as conn:
+            # An explicit binding is authoritative, including when it becomes stale.
             row = conn.execute("""
-                SELECT a.api_card_id FROM credential_aliases a JOIN mapping m
+                SELECT m.card_id FROM credential_aliases a LEFT JOIN mapping m
                 ON m.card_id=a.api_card_id AND m.school_id=a.school_id
                 AND m.class_id=a.class_id AND m.class_type=a.class_type
                 WHERE a.school_id=? AND a.credential_type='uhf_epc' AND a.credential_value=?
             """, (str(school_id), epc)).fetchone()
-        return row[0] if row else None
+            if row is not None:
+                return row[0]
+            # Confirmed four-byte device output: AE1DAF0B -> 2921180939.
+            # Keep the raw credential unchanged for logs and explicit bindings.
+            if len(epc) != 8:
+                return None
+            card_id = str(int(epc, 16))
+            row = conn.execute(
+                "SELECT card_id FROM mapping WHERE school_id=? AND card_id=?",
+                (str(school_id), card_id),
+            ).fetchone()
+            return row[0] if row else None
 
     def list_credentials(self, school_id):
         with closing(sqlite3.connect(self.db_path)) as conn:

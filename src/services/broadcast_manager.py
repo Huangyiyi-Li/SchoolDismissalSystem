@@ -498,6 +498,8 @@ class BroadcastManager(QObject):
         source_text = source
         if source == "刷卡" and (source_detail or card_id):
             source_text = f"刷卡 {source_detail or card_id}"
+        elif source == "超高频标签" and card_id:
+            source_text = f"超高频标签 {card_id}"
         self.log_updated.emit(
             timestamp,
             source_text,

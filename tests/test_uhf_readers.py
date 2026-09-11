@@ -50,3 +50,23 @@ def test_binding_survives_sync_and_checks_school_and_card():
         db.delete_mapping('123')
         db.add_mapping('123', '二班', 'c2', 's1', 1)
         assert db.resolve_credential('s1', EPC) is None
+
+def test_real_four_byte_frame_matches_school_decimal_card(tmp_path):
+    frame = bytes.fromhex('09 00 EE 00 AE 1D AF 0B 4F 8F')
+    assert crc16(frame) == 0
+    assert parse_frame(frame) == 'AE1DAF0B'
+    db = DatabaseManager(str(tmp_path / 'school.db'))
+    db.add_mapping('2921180939', '一班', 'c1', 's1', 1)
+    assert db.resolve_credential('s1', parse_frame(frame)) == '2921180939'
+    assert db.resolve_credential('s2', parse_frame(frame)) is None
+    assert db.resolve_credential('s1', '0000AE1DAF0B') is None
+
+
+def test_explicit_binding_precedes_decimal_and_stale_binding_blocks_fallback(tmp_path):
+    db = DatabaseManager(str(tmp_path / 'school.db'))
+    db.add_mapping('2921180939', '一班', 'c1', 's1', 1)
+    db.add_mapping('123', '二班', 'c2', 's1', 1)
+    db.bind_credential('s1', 'AE1DAF0B', '123')
+    assert db.resolve_credential('s1', 'AE1DAF0B') == '123'
+    db.delete_mapping('123')
+    assert db.resolve_credential('s1', 'AE1DAF0B') is None
