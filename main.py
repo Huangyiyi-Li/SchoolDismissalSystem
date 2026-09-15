@@ -12,7 +12,7 @@ from src.app_info import APP_NAME, APP_VERSION
 from src.services.config_manager import ConfigManager
 from src.services.readers.reader_manager import ReaderManager
 from src.services.broadcast_manager import BroadcastManager
-from src.services.led_service import LedService
+from src.services.led_service import MultiScreenLedService
 from src.services.operation_log import default_operation_logger
 from src.services.device_identity import get_or_create_device_no
 from src.database import DatabaseManager
@@ -37,7 +37,7 @@ def main():
     )
     # Until the first schedule check completes, never overwrite the controller's
     # original Ledshow program.
-    led_service = LedService(
+    led_service = MultiScreenLedService(
         config_manager,
         db_manager,
         dismissal_active=None,

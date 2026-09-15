@@ -52,6 +52,12 @@ class SettingsDialog(QDialog):
         self.led_action_finished.connect(self._show_led_result)
         self.preview_finished.connect(self._handle_preview_finished)
         self.setup_ui()
+        from .led_screen_settings import LedScreenSettings
+        self.screen_panel = LedScreenSettings(self)
+        self.led_left_layout.insertWidget(0, self.screen_panel)
+        self.led_global_reset_btn = QPushButton("重置全校今日放学状态")
+        self.led_global_reset_btn.clicked.connect(self.reset_all_led_screens)
+        self.led_left_layout.addWidget(self.led_global_reset_btn)
 
     def setup_ui(self):
         root = QVBoxLayout(self)
@@ -83,6 +89,7 @@ class SettingsDialog(QDialog):
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.navigation.setCurrentRow(0)
         school_layout, reader_layout, voice_layout, led_page_layout, advanced_layout = page_layouts
+        self.led_page_layout = led_page_layout
         from .reader_settings import ReaderSettings
         db = getattr(self.sync_service, 'db', None)
         self.reader_panel = ReaderSettings(self.config, db, self.reader_manager)
@@ -92,6 +99,7 @@ class SettingsDialog(QDialog):
         led_page_layout.addLayout(layout)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
+        self.led_left_layout = left_layout
         form_layout = QFormLayout()
         advanced_form = QFormLayout()
         
@@ -185,7 +193,7 @@ class SettingsDialog(QDialog):
 
         led_group = QGroupBox("LED 屏（仰邦 BX-6E1XP）")
         led_form = QFormLayout(led_group)
-        self.led_enabled_check = QCheckBox("启用 LED 状态屏")
+        self.led_enabled_check = QCheckBox("启用此屏")
         self.led_enabled_check.setChecked(self.config.get("led_enabled", False))
         led_form.addRow("状态:", self.led_enabled_check)
 
@@ -262,6 +270,8 @@ class SettingsDialog(QDialog):
         saved_grades = self._normalize_grade_names(
             self.config.get("led_visible_grades", [])
         )
+        for plan in self.config.get("led_display_plans", []):
+            saved_grades.extend(self._normalize_grade_names(plan.get("settings", {}).get("led_visible_grades", [])))
         available_grades = []
         if self.led_service and hasattr(
             self.led_service, "get_available_admin_grades"
@@ -367,7 +377,7 @@ class SettingsDialog(QDialog):
         self.led_screen_btn = QPushButton("发送测试画面")
         self.led_screen_btn.clicked.connect(self.test_led_screen)
         led_test_layout.addWidget(self.led_screen_btn)
-        self.led_restore_btn = QPushButton("清空状态/恢复原节目")
+        self.led_restore_btn = QPushButton("恢复此屏原节目")
         self.led_restore_btn.clicked.connect(self.reset_led_screen)
         led_test_layout.addWidget(self.led_restore_btn)
         led_form.addRow("设备测试:", led_test_layout)
@@ -548,6 +558,11 @@ class SettingsDialog(QDialog):
             self.navigation.setCurrentRow(3)
             return
 
+        led_setup = self.screen_panel.values()
+        if led_setup is None:
+            self.navigation.setCurrentRow(3)
+            return
+
         # Check if School ID changed
         old_school_id = self.config.get("school_id")
         old_api_base_url = self.config.get("api_base_url", "https://rest.xxt.cn")
@@ -604,6 +619,9 @@ class SettingsDialog(QDialog):
         self.config.set("led_title_font_size", led_values["title_font_size"])
         self.config.set("led_header_font_size", led_values["header_font_size"])
         self.config.set("led_cell_font_size", led_values["cell_font_size"])
+        self.config.set("led_screens", led_setup[0])
+        self.config.set("led_display_plans", led_setup[1])
+        self.config.set("led_enabled", any(screen["enabled"] for screen in led_setup[0]))
         # Time settings removed
         self.config.save()
         if self.sync_service and self.sync_service.api:
@@ -614,14 +632,18 @@ class SettingsDialog(QDialog):
         if self.reader_manager and old_readers != reader_values:
             if not self.reader_manager.restart():
                 msg += "\n部分读卡设备未启动，请检查端口占用：\n" + "\n".join(self.reader_manager.statuses)
-        if self.led_service and old_led_enabled and (
+        if hasattr(self.led_service, "reconfigure"):
+            if school_id_changed:
+                self.led_service.reset_statuses(school_id=old_school_id)
+            self.led_service.reconfigure(reset_outputs=school_id_changed)
+        if self.led_service and not hasattr(self.led_service, "reconfigure") and old_led_enabled and (
             not new_led_enabled or led_target_changed or school_id_changed
         ):
             # Queue this before a school sync can enqueue its first new-school
             # refresh, especially when an older refresh is already running.
             self.led_service.clear_async(old_led_ip, old_led_port)
         if school_id_changed or api_base_url_changed:
-            if self.led_service and school_id_changed:
+            if self.led_service and school_id_changed and not hasattr(self.led_service, "reconfigure"):
                 self.led_service.reset_statuses(school_id=old_school_id)
             self.clear_local_school_data()
             msg += "\n\n检测到学校 ID 或接口地址已变更，正在尝试应用并同步..."
@@ -848,6 +870,7 @@ class SettingsDialog(QDialog):
         self.preview_generate_btn.setText(self._preview_state.button_label)
         self.preview_status_label.setText("正在后台生成预览，请稍候…")
         request_values = dict(values)
+        request_screen_id = self.screen_panel.screens[self.screen_panel.index]["id"]
         sample_statuses = self.preview_sample_check.isChecked()
         preview_dir = Path(get_app_root()) / "data" / "led-preview"
 
@@ -886,12 +909,18 @@ class SettingsDialog(QDialog):
                     "values": request_values,
                     "error": str(exc),
                 }
+            payload["screen_id"] = request_screen_id
             if not self._closing:
                 self.preview_finished.emit(payload)
 
         threading.Thread(target=run, daemon=True).start()
 
     def _handle_preview_finished(self, payload):
+        current_screen_id = self.screen_panel.screens[self.screen_panel.index]["id"]
+        if payload.get("screen_id", current_screen_id) != current_screen_id:
+            self._preview_state.complete(payload["revision"], success=False)
+            self._update_preview_buttons()
+            return
         stale = self._preview_state.complete(
             payload["revision"],
             success=payload["ok"],
@@ -1057,6 +1086,8 @@ class SettingsDialog(QDialog):
         self.led_screen_btn.setEnabled(False)
         self.led_restore_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
+        self.screen_panel.setEnabled(False)
+        self.led_global_reset_btn.setEnabled(False)
         self._led_action_running = True
 
         def run():
@@ -1101,7 +1132,22 @@ class SettingsDialog(QDialog):
             )
         )
 
+    def reset_all_led_screens(self):
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("重置全校今日放学状态？")
+        box.setText("将清空今天所有行政班、社团班的 LED 放学状态，并恢复所有已配置屏幕的原节目。")
+        box.setInformativeText("该操作影响全校所有屏幕，之后刷卡会重新生成状态。")
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        box.button(QMessageBox.StandardButton.Yes).setText("重置全校状态")
+        if box.exec() == QMessageBox.StandardButton.Yes:
+            self._run_led_action(lambda values: self.led_service.reset_and_restore())
+
     def reset_led_screen(self):
+        if hasattr(self.led_service, "restore_target"):
+            self._run_led_action(lambda values: self.led_service.restore_target(values["ip"], values["port"]))
+            return
         confirmation = QMessageBox(self)
         confirmation.setIcon(QMessageBox.Icon.Warning)
         confirmation.setWindowTitle("清空班级状态并恢复原节目？")
@@ -1124,6 +1170,8 @@ class SettingsDialog(QDialog):
         )
 
     def _show_led_result(self, ok, message):
+        self.screen_panel.setEnabled(True)
+        self.led_global_reset_btn.setEnabled(True)
         self._led_action_running = False
         self.led_connect_btn.setEnabled(True)
         self.led_screen_btn.setEnabled(True)

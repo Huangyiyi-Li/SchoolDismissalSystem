@@ -100,3 +100,93 @@ class ConfigManager:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
         except Exception as e:
             print(f"[Config] Error saving config: {e}")
+
+
+# Device settings are independent even when several screens share one plan.
+LED_DEVICE_KEYS = ('led_controller_ip', 'led_controller_port', 'led_width',
+                   'led_height', 'led_color_mode')
+LED_PLAN_KEYS = tuple(key for key in ConfigManager.DEFAULT_CONFIG
+                      if key.startswith('led_') and key not in LED_DEVICE_KEYS
+                      and key not in ('led_enabled', 'led_dismissed_delay_seconds'))
+
+
+def load_led_setup(config):
+    """Return an isolated editing snapshot; legacy migration never changes the caller."""
+    from copy import deepcopy
+    screens = config.get('led_screens')
+    if screens is not None:
+        return deepcopy(screens), deepcopy(config.get('led_display_plans', []))
+    def settings(keys):
+        return {key: deepcopy(config.get(key, ConfigManager.DEFAULT_CONFIG[key])) for key in keys}
+    return ([{'id': 'default', 'name': '默认屏幕', 'enabled': bool(config.get('led_enabled', False)),
+              'plan_id': 'default', 'settings': settings(LED_DEVICE_KEYS)}],
+            [{'id': 'default', 'name': '默认显示方案', 'settings': settings(LED_PLAN_KEYS)}])
+
+
+def validate_led_setup(screens, plans):
+    import ipaddress
+    import re
+    from .led_dimensions import validate_led_dimensions
+    ids, targets = set(), set()
+    plan_ids = set()
+    for plan in plans:
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', str(plan.get('id', ''))) or plan['id'] in plan_ids:
+            raise ValueError('显示方案标识无效或重复')
+        plan_ids.add(plan['id'])
+        if not str(plan.get('name', '')).strip():
+            raise ValueError('请填写显示方案名称')
+        values = {**ConfigManager.DEFAULT_CONFIG, **plan.get('settings', {})}
+        if values['led_grade_filter_mode'] not in ('all', 'selected'):
+            raise ValueError('显示年级模式无效')
+        if values['led_grade_filter_mode'] == 'selected' and not values['led_visible_grades']:
+            raise ValueError('指定显示年级时，至少选择一个年级')
+        for key in ('led_page_seconds',):
+            if not 1 <= float(values[key]) <= 300:
+                raise ValueError('翻页间隔必须为 1-300 秒')
+        for key in ('led_grades_per_page', 'led_layout_regions', 'led_club_rows_per_group', 'led_club_groups_per_page'):
+            if not 1 <= int(values[key]) <= 6:
+                raise ValueError('布局行数和分区数必须为 1-6')
+        for key in ('led_title_font_size', 'led_header_font_size', 'led_cell_font_size'):
+            if not 0 <= int(values[key]) <= 64:
+                raise ValueError('字号必须为自动或 1-64 像素')
+        if values['led_show_title'] and not str(values['led_school_title']).strip():
+            raise ValueError('显示标题时，标题不能为空')
+    for screen in screens:
+        sid = str(screen.get('id', ''))
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', sid) or sid in ids:
+            raise ValueError('屏幕标识无效或重复')
+        ids.add(sid)
+        name = str(screen.get('name', '')).strip()
+        if not name:
+            raise ValueError('请填写屏幕名称')
+        if screen.get('plan_id') not in plan_ids:
+            raise ValueError(f'{name}：请选择有效的显示方案')
+        values = {**ConfigManager.DEFAULT_CONFIG, **screen.get('settings', {})}
+        try:
+            ip = str(ipaddress.ip_address(values['led_controller_ip']))
+            port = int(values['led_controller_port'])
+            if not 1 <= port <= 65535:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise ValueError(f'{name}：屏幕 IP 或端口无效') from None
+        target = (ip, port)
+        if target in targets:
+            raise ValueError(f'{name}：该 IP 和端口已被另一块屏使用')
+        targets.add(target)
+        dimensions = validate_led_dimensions(values['led_width'], values['led_height'], values['led_color_mode'])
+        if not dimensions.ok:
+            raise ValueError(f'{name}：{dimensions.message}')
+
+
+class LedScreenConfig:
+    """Immutable screen/plan overlay with live access to school-wide settings."""
+    def __init__(self, parent, screen, plan):
+        from copy import deepcopy
+        self.parent = parent
+        self.values = deepcopy({**{k: ConfigManager.DEFAULT_CONFIG[k] for k in (*LED_DEVICE_KEYS, *LED_PLAN_KEYS)},
+                                **{k: v for k, v in plan.get('settings', {}).items() if k in LED_PLAN_KEYS},
+                                **{k: v for k, v in screen.get('settings', {}).items() if k in LED_DEVICE_KEYS},
+                                'led_enabled': bool(screen.get('enabled', False))})
+
+    def get(self, key, default=None):
+        return self.values[key] if key in self.values else self.parent.get(key, default)

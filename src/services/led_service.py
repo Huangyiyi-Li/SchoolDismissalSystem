@@ -1217,3 +1217,274 @@ class LedService:
     def _log_failed_result(action, result):
         if result is not None and not result.ok:
             print(f"[LED] {action}失败: {result.message}")
+
+
+class _ScreenOutput(LedService):
+    """One output queue and rotation; never owns or persists dismissal events."""
+    def __init__(self, owner, *args, **kwargs):
+        self.owner = owner
+        self.last_result = None
+        self._manual_restore_pending = False
+        self._manual_restore_in_flight = False
+        super().__init__(*args, **kwargs)
+        self._requested_config = self.config
+
+    def _restore_persisted_statuses(self):
+        pass
+
+    def reset_statuses(self, school_id=None):
+        pass
+
+    def _clear_class_type_statuses_locked(self, class_type):
+        pass
+
+    def get_statuses_snapshot(self, test_mode=None):
+        return self.owner.get_statuses_snapshot(test_mode)
+
+    def refresh(self, *args, **kwargs):
+        if self._shutdown_event.is_set() or not self.config.get("led_enabled", False):
+            return BridgeResult(True, "此屏未启用，未发送画面")
+        self._manual_restore_pending = False
+        snapshot = self.owner.get_statuses_snapshot()
+        with self._lock:
+            self._status_date = self.clock().date()
+            self._statuses = snapshot
+            self._test_mode = False
+        result = super().refresh(*args, **kwargs)
+        self.last_result = result
+        return result
+
+    def _record_operation(self, category, action, target="", result="", detail=""):
+        if result in ("success", "fail"):
+            self.last_result = BridgeResult(result == "success", detail)
+        return super()._record_operation(category, action, target, result, detail)
+
+    def restore_original_async(self):
+        with self._lock:
+            if self._manual_restore_in_flight:
+                return BridgeResult(False, "该屏正在恢复原节目，请稍后查看状态")
+            self._manual_restore_in_flight = True
+            self._manual_restore_pending = False
+        _, generation = self._stop_display_session()
+
+        def restore():
+            try:
+                with self._operation_lock:
+                    with self._lock:
+                        if generation != self._display_generation:
+                            return BridgeResult(True, "恢复请求已被新的画面取代")
+                    result = self.bridge.clear(self.config.get('led_controller_ip'), self.config.get('led_controller_port'))
+            except Exception as exc:
+                result = BridgeResult(False, str(exc))
+            finally:
+                with self._lock:
+                    self._manual_restore_in_flight = False
+            with self._lock:
+                self._manual_restore_pending = not result.ok and generation == self._display_generation
+            self._record_operation("LED 屏", "恢复此屏原节目", self._controller_target(),
+                                   "success" if result.ok else "fail", result.message)
+            return result
+        return self._submitter(restore)
+
+    def retry_manual_restore(self):
+        if self._manual_restore_pending:
+            self.restore_original_async()
+
+    def _run_display_rotation(self, generation):
+        try:
+            result = super()._run_display_rotation(generation)
+        except Exception as exc:
+            result = BridgeResult(False, str(exc))
+        if result is not None:
+            self.last_result = result
+            if not result.ok:
+                with self._lock:
+                    self._window_refresh_pending = True
+                    self._next_window_refresh_retry_at = None
+        return result
+
+    def _run_refresh_once(self):
+        result = super()._run_refresh_once()
+        if result is not None:
+            self.last_result = result
+        return result
+
+
+class MultiScreenLedService(LedService):
+    """A single school status owner dispatching to independent screen services."""
+    def __init__(self, config_manager, db_manager, bridge_factory=None,
+                 output_submitter=None, **kwargs):
+        self.outputs = {}
+        self._outputs_lock = threading.RLock()
+        self._bridge_factory = bridge_factory
+        self._output_submitter = output_submitter
+        self._aux_outputs = {}
+        super().__init__(config_manager, db_manager, **kwargs)
+        self.reconfigure(refresh=False)
+
+    def _class_status_affects_led(self, class_id, class_type):
+        # Filtering belongs to outputs, never to shared event storage.
+        return True
+
+    def _queue_window_restore(self):
+        # The owner has no physical screen. Each output restores independently.
+        with self._lock:
+            self._window_restore_pending = False
+
+    def refresh_async(self):
+        if self._shutdown_event.is_set():
+            return None
+        with self._outputs_lock:
+            outputs = list(self.outputs.values())
+        for output in outputs:
+            output.refresh_async()
+        return None
+
+    def set_dismissal_active(self, active, class_types=None):
+        # Publish the shared transition before outputs take their next snapshot.
+        changed = super().set_dismissal_active(active, class_types)
+        with self._lock:
+            # Retry ownership belongs to each physical output.
+            self._window_refresh_pending = False
+            self._next_window_refresh_retry_at = None
+        with self._outputs_lock:
+            outputs = list(self.outputs.values())
+            retired = list(self._aux_outputs.values())
+        for output in outputs:
+            output.retry_manual_restore()
+            output.set_dismissal_active(active and output.config.get('led_enabled', False), class_types)
+        for output in retired:
+            output.retry_manual_restore()
+            output.set_dismissal_active(False)
+        return changed
+
+    def reconfigure(self, refresh=True, reset_outputs=False):
+        import uuid
+        from .config_manager import load_led_setup, validate_led_setup, LedScreenConfig
+        screens, plans = load_led_setup(self.config)
+        validate_led_setup(screens, plans)
+        plans = {plan['id']: plan for plan in plans}
+        with self._outputs_lock:
+            # A worker belongs to a physical endpoint. Reassigning names or
+            # swapping screen addresses must not let an old clear erase a new send.
+            pool = list(dict.fromkeys([*self.outputs.values(), *self._aux_outputs.values()]))
+            previous = set(self.outputs.values())
+            assigned = {}
+            for screen in screens:
+                effective = LedScreenConfig(self.config, screen, plans[screen['plan_id']])
+                output = next((candidate for candidate in pool
+                               if all(candidate.config.get(k) == effective.get(k) for k in
+                                      ('led_controller_ip', 'led_controller_port'))), None)
+                if output is None:
+                    output = _ScreenOutput(
+                        self, effective, self.db,
+                        bridge=self._bridge_factory(screen) if self._bridge_factory else None,
+                        output_dir=self.output_dir / (screen['id'] + '-' + uuid.uuid4().hex),
+                        submitter=self._output_submitter,
+                        clock=self.clock, timer_factory=self._timer_factory,
+                        dismissal_active=(self._dismissal_active and effective.get('led_enabled')) if self._dismissal_state_initialized else None,
+                        operation_logger=self.operation_logger)
+                    output._active_class_types = set(self._active_class_types)
+                else:
+                    pool.remove(output)
+                assigned[screen['id']] = output
+                if reset_outputs or output._requested_config is None or output._requested_config.values != effective.values:
+                    output._requested_config = effective
+                    output._stop_display_session()
+                    # Capture the old config at execution, after earlier edits.
+                    def apply(output=output, effective=effective):
+                        if output._requested_config is not effective:
+                            return
+                        output._stop_display_session()
+                        old = output.config
+                        if old.get('led_enabled') and not effective.get('led_enabled'):
+                            output.set_dismissal_active(False)
+                        elif old.get('led_enabled') and (
+                            reset_outputs or old.get('led_color_mode') != effective.get('led_color_mode')
+                        ):
+                            with output._operation_lock:
+                                output.last_result = output.bridge.clear(old.get('led_controller_ip'), old.get('led_controller_port'))
+                        output.config = effective
+                        if not (old.get('led_enabled') and not effective.get('led_enabled')):
+                            output.set_dismissal_active(self._dismissal_active and effective.get('led_enabled'), self._active_class_types)
+                        if refresh:
+                            output.refresh_async()
+                    output._submitter(apply)
+            # Retired endpoints retain their queues so an immediate re-add is safe.
+            self._aux_outputs = {id(output): output for output in pool}
+            for output in pool:
+                if output in previous:
+                    output._requested_config = None
+                    output.set_dismissal_active(False)
+                    output.config.values['led_enabled'] = False
+            self.outputs = assigned
+        if refresh:
+            self.refresh_async()
+
+    def _target_output(self, ip=None, port=None):
+        with self._outputs_lock:
+            for output in [*self.outputs.values(), *self._aux_outputs.values()]:
+                if (ip is None or output.config.get('led_controller_ip') == ip) and (
+                    port is None or int(output.config.get('led_controller_port')) == int(port)
+                ):
+                    return output
+            # Unsaved screens can be tested without altering saved configuration.
+            key = (ip, port)
+            if key not in self._aux_outputs:
+                from .config_manager import LedScreenConfig
+                config = LedScreenConfig(self.config, {'enabled': False, 'settings': {
+                    'led_controller_ip': ip, 'led_controller_port': port or 5005}}, {})
+                self._aux_outputs[key] = _ScreenOutput(
+                    self, config, self.db,
+                    bridge=self._bridge_factory({'id': 'draft-' + str(len(self._aux_outputs))}) if self._bridge_factory else None,
+                    output_dir=self.output_dir / ('test-' + str(len(self._aux_outputs))),
+                    dismissal_active=False, operation_logger=self.operation_logger)
+            return self._aux_outputs[key]
+
+    def test_connection(self, ip=None, port=None):
+        output = self._target_output(ip, port)
+        result = output.test_connection(ip, port)
+        output.last_result = result
+        return result
+
+    def send_test_screen(self, **kwargs):
+        output = self._target_output(kwargs.get('ip'), kwargs.get('port'))
+        pending = output._submitter(lambda: output.send_test_screen(**kwargs))
+        result = pending.result() if hasattr(pending, "result") else pending
+        output.last_result = result
+        return result
+
+    def restore_screen(self, screen_id):
+        output = self.outputs[screen_id]
+        result = output.restore_original_async()
+        return result.result() if hasattr(result, 'result') else result
+
+    def restore_target(self, ip=None, port=None):
+        output = self._target_output(ip, port)
+        result = output.restore_original_async()
+        return result.result() if hasattr(result, 'result') else result
+
+    def clear_async(self, ip=None, port=None):
+        return self._target_output(ip, port).clear_async(ip, port)
+
+    def reset_and_restore(self, ip=None, port=None):
+        self.reset_statuses()
+        with self._outputs_lock:
+            outputs = list(self.outputs.values())
+        pending = [output.restore_original_async() for output in outputs]
+        results = [item.result() if hasattr(item, 'result') else item for item in pending]
+        return BridgeResult(all(result.ok for result in results), '已重置全校状态并恢复所有屏幕原节目' if all(result.ok for result in results) else '全校状态已重置，部分屏幕恢复失败，请检查连接')
+
+    def screen_statuses(self):
+        with self._outputs_lock:
+            return {sid: ('未启用 · 最近通信失败' if not output.config.get('led_enabled') and output.last_result is not None and not output.last_result.ok else
+                          '未启用' if not output.config.get('led_enabled') else
+                          '尚未连接' if output.last_result is None else
+                          '最近通信成功' if output.last_result.ok else '通信失败')
+                    for sid, output in self.outputs.items()}
+
+    def shutdown(self):
+        super().shutdown()
+        with self._outputs_lock:
+            for output in [*self.outputs.values(), *self._aux_outputs.values()]:
+                output.shutdown()
