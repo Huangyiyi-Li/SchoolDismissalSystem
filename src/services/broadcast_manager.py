@@ -344,6 +344,16 @@ class BroadcastManager(QObject):
             )
             return {"result": "fail", "message": f"class not found: {class_id}"}
 
+        # A valid server command is itself an explicit display trigger.  Keep
+        # the existing schedule state untouched so an administrative command
+        # cannot clear a concurrently active club/grade type.
+        led_service = getattr(self, "led_service", None)
+        if led_service and hasattr(led_service, "set_dismissal_active"):
+            try:
+                led_service.set_dismissal_active(True)
+            except (TypeError, RuntimeError):
+                pass
+
         message = build_dismissal_voice_text(class_name)
         self.tts_worker.add_text(message)
         reason = "服务端指令"

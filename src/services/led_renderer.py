@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import os
 import re
+import unicodedata
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -309,9 +310,92 @@ def _class_header(item):
     grade = str(item.get("grade_name") or "").strip()
     if grade and label.startswith(grade):
         label = label[len(grade):].strip()
-    # Common service labels include 一(3)班 and 一（3）班.
-    number = re.search(r"[（(](\d+)[）)]班?$", label)
-    return f"{int(number.group(1))}班" if number else label
+    # Normalize known number formats, but keep named classes intact.
+    compact = re.sub(r"\s+", "", unicodedata.normalize("NFKC", label))
+    number = re.fullmatch(r"(?:\d+|[一二三四五六七八九十]+)[.·](\d+)班?", compact)
+    if not number:
+        number = re.search(r"\((\d+)\)班?$", compact)
+    if not number:
+        number = re.fullmatch(r"(\d+)班", compact)
+    if number:
+        return f"{int(number.group(1))}班"
+    chinese = re.fullmatch(r"([一二三四五六七八九十]+)班", compact)
+    if chinese:
+        digits = {c: n for n, c in enumerate('零一二三四五六七八九')}
+        text = chinese.group(1)
+        if len(text) == 1 and text in digits:
+            return f"{digits[text]}班"
+        if text.count('十') == 1:
+            tens, ones = text.split('十')
+            if (not tens or tens in digits) and (not ones or ones in digits):
+                return f"{digits.get(tens, 1) * 10 + digits.get(ones, 0)}班"
+    return label
+
+
+def _admin_headers(rows, class_type):
+    headers = list(dict.fromkeys(
+        "状态" if int(class_type or 1) == 2 else _class_header(item)
+        for row in rows for item in row.classes
+    ))
+    numbered = sorted((h for h in headers if re.fullmatch(r"\d+班", h)),
+                      key=lambda h: int(h[:-1]))
+    return numbered + [h for h in headers if h not in numbered]
+
+
+def _fit_admin_region(draw, rows, headers, width, height, header_size=0, cell_size=0):
+    """Solve font sizes and grade-column width together, reserving room for statuses.
+
+    Automatic row/column/status text shares one size. Explicit font sizes remain
+    upper bounds, and the grade column follows measured text plus proportional padding.
+    """
+    row_height = max(1, height // (len(rows) + 1))
+    automatic = max(1, int(row_height * 0.60))
+    supplied = [int(v) for v in (header_size, cell_size) if v]
+    base = min(supplied) if supplied else automatic
+    header_start = int(header_size or base)
+    cell_start = int(cell_size or base)
+    grade_names = [row.grade_name for row in rows]
+    for step in range(max(header_start, cell_start), 0, -1):
+        factor = step / max(header_start, cell_start)
+        hs, cs = max(1, int(header_start * factor)), max(1, int(cell_start * factor))
+        hf, cf = _load_font(hs), _load_font(cs)
+        padding = max(6, round(max(hs, cs) * 0.65))
+        def dimensions(texts, font):
+            boxes = [draw.textbbox((0, 0), text, font=font) for text in texts]
+            return max((b[2]-b[0] for b in boxes), default=0), max((b[3]-b[1] for b in boxes), default=0)
+        gw, gh = dimensions(grade_names, hf)
+        hw, hh = dimensions(headers, hf)
+        sw, sh = dimensions(['未放学', '放学中', '已放学'], cf)
+        grade_width = gw + padding
+        cell_width = max(hw, sw) + padding
+        if grade_width + len(headers) * cell_width <= width and max(gh, hh, sh) + 4 <= row_height:
+            return hs, cs, grade_width
+    # Extremely small LED viewports still reserve a nonzero data area; drawing
+    # helpers skip any glyph that cannot fit rather than crossing a grid line.
+    return 1, 1, max(1, min(width // 3, grade_width))
+
+
+def _top_title_pages(renderer, options):
+    """Render the table in its own viewport so no grid line crosses the title."""
+    options = dict(options)
+    title = options['school_title']
+    width, height = options['width'], options['height']
+    band = max(1, min(height - 1, height // 6))
+    options.update(show_title=False, height=max(1, height - band), title_position='left')
+    paths = renderer(**options)
+    dual = normalize_color_mode(options['color_mode']) == 'double'
+    color = LED_RED if dual else 1
+    for path in paths:
+        with Image.open(path) as table:
+            image = Image.new(table.mode, (width, height), LED_BLACK if dual else 0)
+            image.paste(table, (0, band))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, width - 1, height - 1), outline=color)
+        draw.line((0, band, width - 1, band), fill=color)
+        _draw_title(draw, ' '.join(str(title).splitlines()), (0, 0, width, band),
+                    fill=color, preferred=int(options['title_font_size'] or 22 * options['pixel_scale']))
+        image.save(path, format='BMP')
+    return paths
 
 
 def render_led_pages(
@@ -330,7 +414,11 @@ def render_led_pages(
     title_font_size=0,
     header_font_size=0,
     cell_font_size=0,
+    title_position="left",
+    pixel_scale=1.0,
 ):
+    if show_title and title_position == "top":
+        return _top_title_pages(render_led_pages, locals())
     rows_per_region = max(1, int(grades_per_page))
     region_count = max(1, int(regions_per_page))
     layout = build_led_page_layout(
@@ -350,7 +438,7 @@ def render_led_pages(
 
     # Shrink labels on small contractor-provided screen sizes instead of
     # allowing their fixed minimums to consume the entire content area.
-    title_width = min(170, max(1, width // 7)) if show_title else 0
+    title_width = min(round(170 * pixel_scale), max(1, width // 7)) if show_title else 0
     content_width = width - title_width
     region_width = content_width / region_count
     paths = []
@@ -359,9 +447,9 @@ def render_led_pages(
     layout_color = LED_RED if color_mode == "double" else 1
     image_mode = "RGB" if color_mode == "double" else "1"
     background = LED_BLACK if color_mode == "double" else 0
-    title_preferred = int(title_font_size or 22)
-    header_preferred = int(header_font_size or 18)
-    cell_preferred = int(cell_font_size or 18)
+    title_preferred = int(title_font_size or 22 * pixel_scale)
+    header_preferred = int(header_font_size or 18 * pixel_scale)
+    cell_preferred = int(cell_font_size or 18 * pixel_scale)
     for page_index, page in enumerate(layout.pages, start=1):
         image = Image.new(image_mode, (width, height), background)
         draw = ImageDraw.Draw(image)
@@ -377,6 +465,13 @@ def render_led_pages(
                 preferred=title_preferred,
             )
 
+        region_metrics = [
+            _fit_admin_region(draw, rows, _admin_headers(rows, class_type),
+                              int(region_width), height, header_font_size, cell_font_size)
+            for rows in page.regions if rows
+        ]
+        page_header_size = min((m[0] for m in region_metrics), default=1)
+        page_cell_size = min((m[1] for m in region_metrics), default=1)
         for region_index in range(region_count):
             rows = page.regions[region_index] if region_index < len(page.regions) else []
             actual_row_count = max(1, len(rows))
@@ -387,9 +482,10 @@ def render_led_pages(
                 draw.line((region_x1, 0, region_x1, height), fill=layout_color)
             if not rows:
                 continue
-            grade_width = min(
-                90,
-                max(1, int((region_x2 - region_x1) * 0.18)),
+            headers = _admin_headers(rows, class_type)
+            header_preferred, cell_preferred, grade_width = _fit_admin_region(
+                draw, rows, headers, region_x2 - region_x1, height,
+                page_header_size, page_cell_size,
             )
             data_x1 = region_x1 + grade_width
             draw.line((data_x1, 0, data_x1, height), fill=layout_color)
@@ -398,10 +494,6 @@ def render_led_pages(
                 fill=layout_color,
             )
 
-            headers = list(dict.fromkeys(
-                "状态" if int(class_type or 1) == 2 else _class_header(item)
-                for row in rows for item in row.classes
-            ))
             region_columns = len(headers)
             header_columns = {header: index for index, header in enumerate(headers)}
             class_width = max(1, (region_x2 - data_x1) / region_columns)
@@ -471,7 +563,11 @@ def render_club_led_pages(
     title_font_size=0,
     header_font_size=0,
     cell_font_size=0,
+    title_position="left",
+    pixel_scale=1.0,
 ):
+    if show_title and title_position == "top":
+        return _top_title_pages(render_club_led_pages, locals())
     row_count = max(1, int(rows_per_group))
     group_count = max(1, int(groups_per_page))
     layout = build_led_page_layout(
@@ -487,7 +583,7 @@ def render_club_led_pages(
     if not layout.pages:
         return []
 
-    title_width = min(170, max(1, width // 7)) if show_title else 0
+    title_width = min(round(170 * pixel_scale), max(1, width // 7)) if show_title else 0
     content_width = width - title_width
     group_width = content_width / group_count
     header_height = max(1, height // (row_count + 1))
@@ -497,10 +593,10 @@ def render_club_led_pages(
     layout_color = LED_RED if color_mode == "double" else 1
     image_mode = "RGB" if color_mode == "double" else "1"
     background = LED_BLACK if color_mode == "double" else 0
-    title_preferred = int(title_font_size or 22)
-    header_preferred = int(header_font_size or 14)
-    club_name_preferred = int(header_font_size or 16)
-    cell_preferred = int(cell_font_size or 12)
+    title_preferred = int(title_font_size or 22 * pixel_scale)
+    header_preferred = int(header_font_size or 14 * pixel_scale)
+    club_name_preferred = int(header_font_size or 16 * pixel_scale)
+    cell_preferred = int(cell_font_size or 12 * pixel_scale)
     for page_index, page in enumerate(layout.pages, start=1):
         image = Image.new(image_mode, (width, height), background)
         draw = ImageDraw.Draw(image)

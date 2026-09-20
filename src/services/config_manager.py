@@ -21,6 +21,9 @@ class ConfigManager:
         "mqtt_rpc_request_topic": "v1/devices/me/rpc/request/+",
         "mqtt_rpc_response_topic_template": "v1/devices/me/rpc/response/{request_id}",
         "led_enabled": False,
+        "led_output_type": "led",
+        "led_monitor": "",
+        "led_title_position": "left",
         "led_controller_ip": "192.168.100.1",
         "led_controller_port": 5005,
         "led_width": 1024,
@@ -104,7 +107,7 @@ class ConfigManager:
 
 # Device settings are independent even when several screens share one plan.
 LED_DEVICE_KEYS = ('led_controller_ip', 'led_controller_port', 'led_width',
-                   'led_height', 'led_color_mode')
+                   'led_height', 'led_color_mode', 'led_output_type', 'led_monitor')
 LED_PLAN_KEYS = tuple(key for key in ConfigManager.DEFAULT_CONFIG
                       if key.startswith('led_') and key not in LED_DEVICE_KEYS
                       and key not in ('led_enabled', 'led_dismissed_delay_seconds'))
@@ -136,6 +139,8 @@ def validate_led_setup(screens, plans):
         if not str(plan.get('name', '')).strip():
             raise ValueError('请填写显示方案名称')
         values = {**ConfigManager.DEFAULT_CONFIG, **plan.get('settings', {})}
+        if values['led_title_position'] not in ('left', 'top'):
+            raise ValueError('标题位置必须为左侧或顶部')
         if values['led_grade_filter_mode'] not in ('all', 'selected'):
             raise ValueError('显示年级模式无效')
         if values['led_grade_filter_mode'] == 'selected' and not values['led_visible_grades']:
@@ -162,6 +167,15 @@ def validate_led_setup(screens, plans):
         if screen.get('plan_id') not in plan_ids:
             raise ValueError(f'{name}：请选择有效的显示方案')
         values = {**ConfigManager.DEFAULT_CONFIG, **screen.get('settings', {})}
+        if values['led_output_type'] not in ('led', 'desktop'):
+            raise ValueError(f'{name}：屏幕输出类型无效')
+        if values['led_output_type'] == 'desktop':
+            target = ('desktop', str(values['led_monitor']))
+            if screen.get('enabled') and target in targets:
+                raise ValueError(f'{name}：该电脑显示器已被另一块启用屏幕使用')
+            if screen.get('enabled'):
+                targets.add(target)
+            continue  # Desktop dimensions come from QScreen, never a controller.
         try:
             ip = str(ipaddress.ip_address(values['led_controller_ip']))
             port = int(values['led_controller_port'])
@@ -183,8 +197,12 @@ class LedScreenConfig:
     def __init__(self, parent, screen, plan):
         from copy import deepcopy
         self.parent = parent
+        device_defaults = {}
+        if screen.get('settings', {}).get('led_output_type') == 'desktop':
+            device_defaults['led_color_mode'] = 'double'
         self.values = deepcopy({**{k: ConfigManager.DEFAULT_CONFIG[k] for k in (*LED_DEVICE_KEYS, *LED_PLAN_KEYS)},
                                 **{k: v for k, v in plan.get('settings', {}).items() if k in LED_PLAN_KEYS},
+                                **device_defaults,
                                 **{k: v for k, v in screen.get('settings', {}).items() if k in LED_DEVICE_KEYS},
                                 'led_enabled': bool(screen.get('enabled', False))})
 

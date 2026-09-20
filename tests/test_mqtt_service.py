@@ -208,6 +208,23 @@ class MqttServiceTests(unittest.TestCase):
             ("v1/devices/me/rpc/response/43", {"result": "fail", "message": "bad command"}, 0),
         )
 
+    def test_method_name_accepts_server_casing_variants_and_logs_ignored_methods(self):
+        client = FakeClient()
+        received = []
+        logger = FakeNetworkLogger()
+        service = DismissalMqttService(
+            device_no="device-1", client_factory=lambda client_id: client,
+            command_handler=lambda command: received.append(command) or {"result": "success"},
+            network_logger=logger,
+        )
+        Message = type("Message", (), {})
+        ignored = Message(); ignored.payload = json.dumps({"method": "Ping"}).encode(); ignored.topic = "rpc/1"
+        service._handle_message(client, None, ignored)
+        accepted = Message(); accepted.payload = json.dumps({"Method": "manual_dismissal", "Params": {"classId": "7"}}).encode(); accepted.topic = "rpc/2"
+        service._handle_message(client, None, accepted)
+        self.assertEqual(received, [{"classId": "7"}])
+        self.assertIn("ignored_method", [entry["result"] for entry in logger.entries])
+
 
 if __name__ == "__main__":
     unittest.main()

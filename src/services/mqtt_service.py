@@ -180,9 +180,20 @@ class DismissalMqttService:
                 response=None,
                 result="received",
             )
-            if payload.get("method") != "ManualDismissal":
+            method = payload.get("method") or payload.get("Method")
+            normalized_method = str(method or "").replace("_", "").replace("-", "").lower()
+            if normalized_method != "manualdismissal":
+                self.network_logger.record(
+                    protocol="MQTT",
+                    direction="IN",
+                    target=getattr(message, "topic", ""),
+                    request=payload,
+                    response=None,
+                    result="ignored_method",
+                )
                 return
-            result = self.command_handler(payload.get("params") or {})
+            params = payload.get("params") or payload.get("Params") or {}
+            result = self.command_handler(params)
             if result is None:
                 result = {"result": "success"}
         except Exception as exc:

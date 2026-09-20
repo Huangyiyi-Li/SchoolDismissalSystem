@@ -262,6 +262,17 @@ class LedService:
             )
             return statuses.get(self._status_key(class_id, class_type), "")
 
+    def display_snapshot(self):
+        """Thread-safe shared state for local displays, independent of LED output."""
+        with self._lock:
+            self._reset_if_new_day()
+            return {
+                'active': self._dismissal_state_initialized and self._dismissal_active,
+                'session': self._window_restore_epoch,
+                'class_types': tuple(sorted(self._active_class_types)),
+                'statuses': dict(self._active_statuses_locked()),
+            }
+
     def get_statuses_snapshot(self, test_mode=None):
         with self._lock:
             self._reset_if_new_day()
@@ -650,6 +661,8 @@ class LedService:
         cell_font_size=None,
         grade_filter_mode=None,
         visible_grades=None,
+        title_position=None,
+        pixel_scale=1.0,
     ):
         width = int(width if width is not None else self.config.get("led_width", 1024))
         height = int(height if height is not None else self.config.get("led_height", 96))
@@ -724,6 +737,8 @@ class LedService:
                     rows_per_group=club_rows,
                     groups_per_page=club_groups,
                     show_title=title_visible,
+                    title_position=title_position or self.config.get("led_title_position", "left"),
+                    pixel_scale=pixel_scale,
                     filename_prefix="led-club-page",
                     color_mode=active_color_mode,
                     title_font_size=active_title_font_size,
@@ -741,6 +756,8 @@ class LedService:
                     grades_per_page=rows,
                     regions_per_page=regions,
                     show_title=title_visible,
+                    title_position=title_position or self.config.get("led_title_position", "left"),
+                    pixel_scale=pixel_scale,
                     class_type=1,
                     filename_prefix="led-page",
                     color_mode=active_color_mode,
@@ -769,6 +786,8 @@ class LedService:
         cell_font_size=None,
         grade_filter_mode=None,
         visible_grades=None,
+        title_position=None,
+        pixel_scale=1.0,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -808,6 +827,8 @@ class LedService:
                 cell_font_size=cell_font_size,
                 grade_filter_mode=grade_filter_mode,
                 visible_grades=visible_grades,
+                title_position=title_position,
+                pixel_scale=pixel_scale,
             )
 
     def test_connection(self, ip=None, port=None):
@@ -933,6 +954,8 @@ class LedService:
         cell_font_size=None,
         grade_filter_mode=None,
         visible_grades=None,
+        title_position=None,
+        pixel_scale=1.0,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -1018,6 +1041,8 @@ class LedService:
                 cell_font_size=cell_font_size,
                 grade_filter_mode=grade_filter_mode,
                 visible_grades=visible_grades,
+                title_position=title_position,
+                pixel_scale=pixel_scale,
             )
             result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),
@@ -1371,6 +1396,8 @@ class MultiScreenLedService(LedService):
             previous = set(self.outputs.values())
             assigned = {}
             for screen in screens:
+                if screen.get("settings", {}).get("led_output_type") == "desktop":
+                    continue
                 effective = LedScreenConfig(self.config, screen, plans[screen['plan_id']])
                 output = next((candidate for candidate in pool
                                if all(candidate.config.get(k) == effective.get(k) for k in

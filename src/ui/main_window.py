@@ -141,6 +141,10 @@ class MainWindow(QMainWindow):
         config_action.triggered.connect(self.open_settings_dialog)
         toolbar.addAction(config_action)
         
+        desktop_action = QAction("恢复电脑展示", self)
+        desktop_action.triggered.connect(self.resume_desktop_display)
+        toolbar.addAction(desktop_action)
+
         schedule_action = QAction("放学时间", self)
         schedule_action.triggered.connect(self.open_schedule_dialog)
         toolbar.addAction(schedule_action)
@@ -237,6 +241,13 @@ class MainWindow(QMainWindow):
         # Assuming we might want to visualize queue later, 
         # but currently BroadcastManager's worker consumes queue immediately.
         # We can add a signal in TTSWorker when item starts/ends if strict visualization needed.
+
+    def resume_desktop_display(self):
+        manager = getattr(self.led_service, 'desktop_display', None)
+        if manager:
+            manager.resume()
+            if not self.led_service.display_snapshot()['active']:
+                QMessageBox.information(self, '电脑展示', '当前不在放学时段，进入放学时段后将自动展示。可在系统设置 → 屏幕展示中测试全屏效果。')
 
     def open_mapping_dialog(self):
         dialog = MappingDialog(self.db, self)

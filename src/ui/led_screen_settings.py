@@ -10,6 +10,8 @@ from ..services.config_manager import (load_led_setup, validate_led_setup,
                                        LED_DEVICE_KEYS, LED_PLAN_KEYS, LedScreenConfig)
 
 VALUE_KEYS = {
+    'output_type': 'led_output_type', 'monitor': 'led_monitor',
+    'title_position': 'led_title_position',
     'ip': 'led_controller_ip', 'port': 'led_controller_port',
     'width': 'led_width', 'height': 'led_height', 'color_mode': 'led_color_mode',
     'page_seconds': 'led_page_seconds', 'grades_per_page': 'led_grades_per_page',
@@ -86,6 +88,9 @@ class LedScreenSettings(QWidget):
     def update_summaries(self):
         service = self.dialog.led_service
         statuses = service.screen_statuses() if hasattr(service, 'screen_statuses') else {}
+        manager = getattr(service, 'desktop_display', None)
+        if manager:
+            statuses.update(manager.statuses)
         for i, screen in enumerate(self.screens):
             plan = next(p for p in self.plans if p['id'] == screen['plan_id'])
             settings = plan['settings']
@@ -112,7 +117,7 @@ class LedScreenSettings(QWidget):
         if values is None:
             return False
         if not self.name_edit.text().strip() or not self.plan_name.text().strip():
-            QMessageBox.warning(self.dialog, 'LED 屏', '请填写屏幕名称和方案名称')
+            QMessageBox.warning(self.dialog, '屏幕展示', '请填写屏幕名称和方案名称')
             return False
         screen = self.screens[self.index]
         screen['name'] = self.name_edit.text().strip()
@@ -126,6 +131,7 @@ class LedScreenSettings(QWidget):
 
     def load_form(self):
         self.loading = True
+        self.dialog._desktop_fullscreen_requested = False
         screen, plan = self.screens[self.index], self.current_plan()
         cfg = LedScreenConfig(self.dialog.config, screen, plan)
         self.name_edit.setText(screen['name'])
@@ -133,6 +139,15 @@ class LedScreenSettings(QWidget):
         self.dialog.led_enabled_check.setChecked(screen['enabled'])
         for key, field in TEXT_FIELDS.items():
             getattr(self.dialog, field).setText(str(cfg.get(key)))
+        self.dialog._led_device_drafts = {}
+        self.dialog.led_output_combo.blockSignals(True)
+        self.dialog.led_output_combo.setCurrentIndex(self.dialog.led_output_combo.findData(cfg.get('led_output_type')))
+        self.dialog.led_output_combo.blockSignals(False)
+        monitor = cfg.get('led_monitor')
+        if self.dialog.led_monitor_combo.findData(monitor) < 0:
+            self.dialog.led_monitor_combo.addItem('未连接 · ' + monitor, monitor)
+        self.dialog.led_monitor_combo.setCurrentIndex(self.dialog.led_monitor_combo.findData(monitor))
+        self.dialog.led_title_position_combo.setCurrentIndex(self.dialog.led_title_position_combo.findData(cfg.get('led_title_position')))
         self.dialog.led_color_mode_combo.setCurrentIndex(self.dialog.led_color_mode_combo.findData(cfg.get('led_color_mode')))
         self.dialog.led_all_grades_check.setChecked(cfg.get('led_grade_filter_mode') == 'all')
         for grade, checkbox in self.dialog.led_grade_checks.items():
@@ -141,8 +156,9 @@ class LedScreenSettings(QWidget):
         self.dialog.led_title_edit.setPlainText(cfg.get('led_school_title'))
         for key in ('led_title_font_size', 'led_header_font_size', 'led_cell_font_size'):
             getattr(self.dialog, key + '_spin').setValue(int(cfg.get(key)))
+        self.dialog.update_output_controls()
         peers = [s['name'] for s in self.screens if s['plan_id'] == plan['id']]
-        self.scope_hint.setText('内容与样式共用于：' + '、'.join(peers) + '。连接、尺寸与启用状态只影响当前屏；已放学延迟对全校生效。')
+        self.scope_hint.setText('内容与样式共用于：' + '、'.join(peers) + '。展示方式、显示器、颜色与启用状态只影响当前屏；已放学延迟对全校生效。')
         self.dialog._preview_pages = []
         self.dialog._preview_index = 0
         self.dialog._preview_source_pixmap = None
@@ -181,7 +197,7 @@ class LedScreenSettings(QWidget):
         screen = deepcopy(self.screens[self.index])
         screen.update(id=uuid.uuid4().hex, name=f'屏幕 {len(self.screens) + 1}', enabled=False)
         addresses = {s['settings'].get('led_controller_ip') for s in self.screens}
-        address = ipaddress.ip_address(screen['settings']['led_controller_ip'])
+        address = ipaddress.ip_address(screen['settings'].get('led_controller_ip') or '192.168.100.1')
         while str(address) in addresses:
             address += 1
         screen['settings']['led_controller_ip'] = str(address)
@@ -206,12 +222,12 @@ class LedScreenSettings(QWidget):
 
     def remove_screen(self):
         if len(self.screens) == 1:
-            QMessageBox.information(self.dialog, 'LED 屏', '最后一块屏可取消“启用此屏”，保留配置方便以后使用。')
+            QMessageBox.information(self.dialog, '屏幕展示', '最后一块屏可取消“启用此屏”，保留配置方便以后使用。')
             return
         name = self.screens[self.index]['name']
         box = QMessageBox(self.dialog)
         box.setWindowTitle('移除屏幕')
-        box.setText(f'保存后移除“{name}”并恢复该屏原节目。班级放学状态将保留。')
+        box.setText(f'保存后移除“{name}”。LED 屏恢复原节目，电脑屏退出展示；班级放学状态将保留。')
         box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         box.button(QMessageBox.StandardButton.Yes).setText('移除屏幕')
         box.setDefaultButton(QMessageBox.StandardButton.Cancel)
@@ -230,6 +246,6 @@ class LedScreenSettings(QWidget):
         try:
             validate_led_setup(self.screens, plans)
         except (ValueError, TypeError) as exc:
-            QMessageBox.warning(self.dialog, 'LED 屏', str(exc))
+            QMessageBox.warning(self.dialog, '屏幕展示', str(exc))
             return None
         return deepcopy(self.screens), deepcopy(plans)

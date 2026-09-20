@@ -64,14 +64,14 @@ class SettingsDialog(QDialog):
         body = QHBoxLayout()
         root.addLayout(body, 1)
         self.navigation = QListWidget()
-        self.navigation.addItems(['学校绑定', '读卡设备', '语音播报', 'LED 屏', '高级设置'])
+        self.navigation.addItems(['学校绑定', '读卡设备', '语音播报', '屏幕展示', '高级设置'])
         self.navigation.setFixedWidth(138)
         self.navigation.setSpacing(6)
         self.pages = QStackedWidget()
         body.addWidget(self.navigation)
         body.addWidget(self.pages, 1)
         page_layouts = []
-        for title in ['学校绑定', '读卡设备', '语音播报', 'LED 屏', '高级设置']:
+        for title in ['学校绑定', '读卡设备', '语音播报', '屏幕展示', '高级设置']:
             page = QWidget()
             outer = QVBoxLayout(page)
             heading = QLabel(title)
@@ -191,12 +191,21 @@ class SettingsDialog(QDialog):
         voice_layout.addWidget(voice_group)
         voice_layout.addStretch()
 
-        led_group = QGroupBox("LED 屏（仰邦 BX-6E1XP）")
+        led_group = QGroupBox("屏幕展示")
         led_form = QFormLayout(led_group)
         self.led_enabled_check = QCheckBox("启用此屏")
         self.led_enabled_check.setChecked(self.config.get("led_enabled", False))
         led_form.addRow("状态:", self.led_enabled_check)
 
+        self.led_output_combo = QComboBox()
+        self.led_output_combo.addItem("LED 控制卡", "led")
+        self.led_output_combo.addItem("电脑显示器", "desktop")
+        led_form.addRow("展示方式:", self.led_output_combo)
+        self.led_monitor_combo = QComboBox()
+        led_form.addRow("电脑显示器:", self.led_monitor_combo)
+        self.led_monitor_refresh = QPushButton("重新检测显示器")
+        self.led_monitor_refresh.clicked.connect(self.refresh_desktop_monitors)
+        led_form.addRow("", self.led_monitor_refresh)
         self.led_ip_edit = QLineEdit(
             self.config.get("led_controller_ip", "192.168.100.1")
         )
@@ -300,7 +309,7 @@ class SettingsDialog(QDialog):
             grade_choices_layout.addWidget(no_grades_label, 0, 0, 1, 3)
         grade_filter_layout.addWidget(grade_choices_widget)
         self.led_grade_filter_hint = QLabel(
-            "仅影响行政班 LED 画面；未选择的年级仍会正常语音播报、记录日志并推送服务端。"
+            "仅影响行政班展示画面；未选择的年级仍会正常语音播报、记录日志并推送服务端。"
         )
         self.led_grade_filter_hint.setWordWrap(True)
         self.led_grade_filter_hint.setStyleSheet("color:#6b7280;font-size:12px;")
@@ -311,7 +320,7 @@ class SettingsDialog(QDialog):
         )
         self.led_all_grades_check.toggled.connect(self.mark_led_preview_stale)
         self._update_led_grade_filter_state()
-        led_form.addRow("LED 显示年级:", grade_filter_widget)
+        led_form.addRow("显示年级:", grade_filter_widget)
 
         self.led_club_rows_edit = QLineEdit(
             str(self.config.get("led_club_rows_per_group", 4))
@@ -337,10 +346,18 @@ class SettingsDialog(QDialog):
         self.led_dismissed_delay_edit.setPlaceholderText("放学中变为已放学的秒数")
         led_form.addRow("已放学延迟(秒):", self.led_dismissed_delay_edit)
 
-        self.led_show_title_check = QCheckBox("显示左侧标题")
+        self.led_show_title_check = QCheckBox("显示标题")
         self.led_show_title_check.setChecked(self.config.get("led_show_title", True))
         led_form.addRow("标题区域:", self.led_show_title_check)
 
+        self.led_auto_layout_btn = QPushButton("恢复自动字号与列宽")
+        self.led_auto_layout_btn.setToolTip("清除手动字号，按单元格空间统一适配行列标题及状态文字，并按文字宽度计算年级列宽。")
+        self.led_auto_layout_btn.clicked.connect(self.restore_auto_layout)
+        led_form.addRow("自动适配:", self.led_auto_layout_btn)
+        self.led_title_position_combo = QComboBox()
+        self.led_title_position_combo.addItem("左侧", "left")
+        self.led_title_position_combo.addItem("顶部", "top")
+        led_form.addRow("标题位置:", self.led_title_position_combo)
         self.led_title_edit = QPlainTextEdit()
         self.led_title_edit.setPlainText(
             self.config.get("led_school_title", "数智家校\n放学系统")
@@ -349,12 +366,12 @@ class SettingsDialog(QDialog):
         self.led_title_edit.setPlaceholderText("学校名称\n数智家校\n放学系统")
         self.led_title_edit.setEnabled(self.led_show_title_check.isChecked())
         self.led_show_title_check.toggled.connect(self.led_title_edit.setEnabled)
-        led_form.addRow("左侧标题:", self.led_title_edit)
+        led_form.addRow("标题内容:", self.led_title_edit)
 
         self.led_title_font_size_spin = self._make_font_size_spin(
             "led_title_font_size"
         )
-        led_form.addRow("左侧标题字号:", self.led_title_font_size_spin)
+        led_form.addRow("标题字号:", self.led_title_font_size_spin)
         self.led_header_font_size_spin = self._make_font_size_spin(
             "led_header_font_size"
         )
@@ -384,7 +401,7 @@ class SettingsDialog(QDialog):
         # Keep controls in task-specific groups while retaining their existing signals.
         self.led_tabs = QTabWidget()
         led_forms = []
-        for title in ['连接', '内容', '样式']:
+        for title in ['设备', '内容', '样式']:
             tab = QWidget()
             tab_layout = QVBoxLayout(tab)
             form = QFormLayout()
@@ -398,7 +415,9 @@ class SettingsDialog(QDialog):
         while led_form.rowCount():
             row = led_form.takeRow(0)
             label = row.labelItem.widget() if row.labelItem else None
-            field = row.fieldItem.widget() or row.fieldItem.layout()
+            field = row.fieldItem.widget()
+            if field is None:
+                field = row.fieldItem.layout()
             text = label.text() if label else ''
             if text == '翻页间隔(秒):':
                 group_index = 1
@@ -410,6 +429,7 @@ class SettingsDialog(QDialog):
                 led_forms[group_index].addRow(label, field)
             else:
                 led_forms[group_index].addRow(field)
+        self.led_connection_form = led_forms[0]
         led_group.deleteLater()
         left_layout.addWidget(self.led_tabs)
 
@@ -432,7 +452,7 @@ class SettingsDialog(QDialog):
         left_scroll.setWidget(left_widget)
         layout.addWidget(left_scroll, stretch=5)
 
-        preview_group = QGroupBox("LED 内容预览（本地预览，不会发送到控制卡）")
+        preview_group = QGroupBox("画面预览（仅本地预览，不影响实时状态）")
         preview_layout = QVBoxLayout(preview_group)
         self.preview_label = QLabel("点击“生成预览”查看当前参数效果")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -526,13 +546,78 @@ class SettingsDialog(QDialog):
         ):
             spin.valueChanged.connect(self.mark_led_preview_stale)
         self._update_preview_buttons()
+        self._led_device_drafts = {}
+        self.led_output_combo.currentIndexChanged.connect(self.change_output_type)
+        self.led_monitor_combo.currentIndexChanged.connect(self.refresh_desktop_dimensions)
+        self.led_title_position_combo.currentIndexChanged.connect(self.mark_led_preview_stale)
+        self.refresh_desktop_monitors()
+        self.update_output_controls()
+
+    def refresh_desktop_monitors(self):
+        from .desktop_display import monitor_key, monitor_pixels
+        from PyQt6.QtGui import QGuiApplication
+        selected = self.led_monitor_combo.currentData() or ""
+        self.led_monitor_combo.blockSignals(True)
+        self.led_monitor_combo.clear()
+        self.led_monitor_combo.addItem("跟随主显示器", "")
+        for index, screen in enumerate(QGuiApplication.screens(), 1):
+            w, h = monitor_pixels(screen)
+            self.led_monitor_combo.addItem(f"显示器 {index} · {screen.name()} · {w} × {h}", monitor_key(screen))
+        if self.led_monitor_combo.findData(selected) < 0:
+            self.led_monitor_combo.addItem(f"未连接 · {selected}", selected)
+        self.led_monitor_combo.setCurrentIndex(self.led_monitor_combo.findData(selected))
+        self.led_monitor_combo.blockSignals(False)
+        self.refresh_desktop_dimensions()
+
+    def refresh_desktop_dimensions(self, *_args):
+        if self.led_output_combo.currentData() != 'desktop':
+            return
+        from .desktop_display import resolve_monitor, monitor_pixels
+        monitor = resolve_monitor(self.led_monitor_combo.currentData())
+        if monitor:
+            w, h = monitor_pixels(monitor)
+            self.led_width_edit.setText(str(w))
+            self.led_height_edit.setText(str(h))
+        self._update_led_size_hint()
+        self.mark_led_preview_stale()
+
+    def change_output_type(self, *_args):
+        kind = self.led_output_combo.currentData()
+        other = 'led' if kind == 'desktop' else 'desktop'
+        self._led_device_drafts[other] = (self.led_width_edit.text(), self.led_height_edit.text(), self.led_color_mode_combo.currentData())
+        width, height, color = self._led_device_drafts.get(kind, ('1024', '96', 'double' if kind == 'desktop' else 'single'))
+        self.led_width_edit.setText(width)
+        self.led_height_edit.setText(height)
+        self.led_color_mode_combo.setCurrentIndex(self.led_color_mode_combo.findData(color))
+        self.update_output_controls()
+        self.mark_led_preview_stale()
+
+    def update_output_controls(self):
+        desktop = self.led_output_combo.currentData() == 'desktop'
+        for field in (self.led_ip_edit, self.led_port_edit):
+            self.led_connection_form.setRowVisible(field, not desktop)
+        for field in (self.led_monitor_combo, self.led_monitor_refresh):
+            self.led_connection_form.setRowVisible(field, desktop)
+        self.led_width_edit.setReadOnly(desktop)
+        self.led_height_edit.setReadOnly(desktop)
+        self.led_connect_btn.setVisible(not desktop)
+        self.led_screen_btn.setText('全屏测试展示' if desktop else '发送测试画面')
+        self.led_restore_btn.setText('退出此屏展示' if desktop else '恢复此屏原节目')
+        self.refresh_desktop_dimensions()
+        self._update_led_size_hint()
+
+    def restore_auto_layout(self):
+        for spin in (self.led_title_font_size_spin, self.led_header_font_size_spin,
+                     self.led_cell_font_size_spin):
+            spin.setValue(0)
+        self.mark_led_preview_stale()
 
     def _make_font_size_spin(self, config_key):
         spin = QSpinBox()
         spin.setRange(0, 64)
         spin.setSpecialValueText("自动")
         spin.setValue(int(self.config.get(config_key, 0) or 0))
-        spin.setToolTip("自动或 1-64 像素")
+        spin.setToolTip("自动：电脑展示随分辨率缩放；手动：固定 1-64 像素")
         return spin
 
     def save_settings(self):
@@ -614,6 +699,7 @@ class SettingsDialog(QDialog):
             "led_dismissed_delay_seconds",
             led_values["dismissed_delay_seconds"],
         )
+        self.config.set("led_title_position", led_values["title_position"])
         self.config.set("led_show_title", led_values["show_title"])
         self.config.set("led_school_title", led_values["title"])
         self.config.set("led_title_font_size", led_values["title_font_size"])
@@ -728,24 +814,26 @@ class SettingsDialog(QDialog):
         ip = self.led_ip_edit.text().strip()
         title = self.led_title_edit.toPlainText().strip()
         show_title = self.led_show_title_check.isChecked()
-        try:
-            ipaddress.ip_address(ip)
-        except ValueError:
-            return fail("控制卡 IP 格式不正确")
-        try:
-            port = int(self.led_port_edit.text().strip())
-            if not 1 <= port <= 65535:
-                raise ValueError()
-        except ValueError:
-            return fail("控制卡端口必须是 1-65535 的数字")
-        dimensions = validate_led_dimensions(
-            self.led_width_edit.text(),
-            self.led_height_edit.text(),
-            self.led_color_mode_combo.currentData(),
-        )
-        if not dimensions.ok:
-            return fail(dimensions.message)
-        width, height = dimensions.width, dimensions.height
+        desktop = self.led_output_combo.currentData() == 'desktop'
+        if desktop:
+            self.refresh_desktop_dimensions()
+            port = 5005
+            width, height = int(self.led_width_edit.text()), int(self.led_height_edit.text())
+        else:
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError:
+                return fail("控制卡 IP 格式不正确")
+            try:
+                port = int(self.led_port_edit.text().strip())
+                if not 1 <= port <= 65535:
+                    raise ValueError()
+            except ValueError:
+                return fail("控制卡端口必须是 1-65535 的数字")
+            dimensions = validate_led_dimensions(self.led_width_edit.text(), self.led_height_edit.text(), self.led_color_mode_combo.currentData())
+            if not dimensions.ok:
+                return fail(dimensions.message)
+            width, height = dimensions.width, dimensions.height
         try:
             page_seconds = float(self.led_page_seconds_edit.text().strip())
             if not 1 <= page_seconds <= 300:
@@ -785,13 +873,16 @@ class SettingsDialog(QDialog):
         except ValueError:
             return fail("社团班横向组数必须是 1-6 的整数")
         if show_title and not title:
-            return fail("显示左侧标题时，标题内容不能为空")
+            return fail("显示标题时，标题内容不能为空")
         grade_filter_mode, visible_grades = self._current_led_grade_filter()
         if grade_filter_mode == "selected" and not visible_grades:
             return fail("指定 LED 显示年级时，至少选择一个年级")
         return {
             "ip": ip,
             "port": port,
+            "output_type": self.led_output_combo.currentData(),
+            "monitor": self.led_monitor_combo.currentData() or "",
+            "title_position": self.led_title_position_combo.currentData(),
             "width": width,
             "height": height,
             "color_mode": self.led_color_mode_combo.currentData() or "single",
@@ -826,6 +917,9 @@ class SettingsDialog(QDialog):
     def _update_led_size_hint(self):
         if not hasattr(self, "led_size_hint"):
             return
+        if hasattr(self, 'led_output_combo') and self.led_output_combo.currentData() == 'desktop':
+            self.led_size_hint.setText('自动读取所选显示器的实际像素（含 Windows 缩放），无需手填。放学时段自动全屏，结束后退出。Esc 退出本次展示，主界面可恢复电脑展示。')
+            return
         pixel_limit = (
             "262144（256K）"
             if self.led_color_mode_combo.currentData() == "double"
@@ -859,6 +953,11 @@ class SettingsDialog(QDialog):
             )
             self._update_preview_buttons()
             return
+        if values['output_type'] == 'desktop':
+            from .desktop_display import resolve_monitor
+            if resolve_monitor(values['monitor']) is None:
+                self.preview_status_label.setText('所选显示器未连接，请连接显示器或重新选择。')
+                return
         if not self.led_service:
             self._show_preview_message("LED 服务未初始化，暂时无法生成预览")
             self.preview_status_label.setText("")
@@ -869,7 +968,9 @@ class SettingsDialog(QDialog):
         self.preview_generate_btn.setEnabled(False)
         self.preview_generate_btn.setText(self._preview_state.button_label)
         self.preview_status_label.setText("正在后台生成预览，请稍候…")
+        from .desktop_display import desktop_scale
         request_values = dict(values)
+        pixel_scale = desktop_scale(values["width"], values["height"]) if values["output_type"] == "desktop" else 1.0
         request_screen_id = self.screen_panel.screens[self.screen_panel.index]["id"]
         sample_statuses = self.preview_sample_check.isChecked()
         preview_dir = Path(get_app_root()) / "data" / "led-preview"
@@ -888,11 +989,13 @@ class SettingsDialog(QDialog):
                     club_rows_per_group=request_values["club_rows_per_group"],
                     club_groups_per_page=request_values["club_groups_per_page"],
                     color_mode=request_values["color_mode"],
-                    title_font_size=request_values["title_font_size"],
-                    header_font_size=request_values["header_font_size"],
-                    cell_font_size=request_values["cell_font_size"],
+                    title_font_size=(0 if request_values["output_type"] == "desktop" else request_values["title_font_size"]),
+                    header_font_size=(0 if request_values["output_type"] == "desktop" else request_values["header_font_size"]),
+                    cell_font_size=(0 if request_values["output_type"] == "desktop" else request_values["cell_font_size"]),
                     grade_filter_mode=request_values["grade_filter_mode"],
                     visible_grades=request_values["visible_grades"],
+                    title_position=request_values["title_position"],
+                    pixel_scale=pixel_scale,
                 )
                 payload = {
                     "revision": request_revision,
@@ -921,6 +1024,24 @@ class SettingsDialog(QDialog):
             self._preview_state.complete(payload["revision"], success=False)
             self._update_preview_buttons()
             return
+        if getattr(self, '_desktop_fullscreen_requested', False):
+            self._desktop_fullscreen_requested = False
+            if payload['ok'] and payload['revision'] == self._preview_state.revision:
+                from .desktop_display import DesktopDisplayWindow, resolve_monitor
+                from ..services.led_preview import colorize_led_preview
+                monitor = resolve_monitor(payload['values']['monitor'])
+                if monitor:
+                    if getattr(self, '_desktop_test_window', None):
+                        self._desktop_test_window.close()
+                    window = self._desktop_test_window = DesktopDisplayWindow(preview=True)
+                    frames = []
+                    for path in payload['pages']:
+                        image = colorize_led_preview(path, payload['values']['color_mode'])
+                        frames.append((image.width, image.height, image.tobytes()))
+                    window.set_frames(frames, payload['values']['page_seconds'])
+                    window.setWindowModality(Qt.WindowModality.ApplicationModal)
+                    window.present(monitor)
+                    self.finished.connect(window.close)
         stale = self._preview_state.complete(
             payload["revision"],
             success=payload["ok"],
@@ -1110,6 +1231,9 @@ class SettingsDialog(QDialog):
         )
 
     def test_led_screen(self):
+        if self.led_output_combo.currentData() == 'desktop':
+            self.test_desktop_screen()
+            return
         self._run_led_action(
             lambda values: self.led_service.send_test_screen(
                 ip=values["ip"],
@@ -1129,22 +1253,44 @@ class SettingsDialog(QDialog):
                 cell_font_size=values["cell_font_size"],
                 grade_filter_mode=values["grade_filter_mode"],
                 visible_grades=values["visible_grades"],
+                title_position=values["title_position"],
             )
         )
+
+    def test_desktop_screen(self):
+        from .desktop_display import resolve_monitor
+        if resolve_monitor(self.led_monitor_combo.currentData()) is None:
+            QMessageBox.warning(self, '电脑展示', '所选显示器未连接，请连接显示器或重新选择。')
+            return
+        self._desktop_fullscreen_requested = True
+        self.generate_led_preview()
+        if not self._preview_state.running:
+            self._desktop_fullscreen_requested = False
 
     def reset_all_led_screens(self):
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("重置全校今日放学状态？")
-        box.setText("将清空今天所有行政班、社团班的 LED 放学状态，并恢复所有已配置屏幕的原节目。")
+        box.setText("将清空今天所有行政班、社团班的放学状态，恢复 LED 原节目，并退出电脑展示。")
         box.setInformativeText("该操作影响全校所有屏幕，之后刷卡会重新生成状态。")
         box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         box.setDefaultButton(QMessageBox.StandardButton.Cancel)
         box.button(QMessageBox.StandardButton.Yes).setText("重置全校状态")
         if box.exec() == QMessageBox.StandardButton.Yes:
+            manager = getattr(self.led_service, 'desktop_display', None)
+            if manager:
+                for sid in list(manager.windows):
+                    manager.dismiss(sid)
             self._run_led_action(lambda values: self.led_service.reset_and_restore())
 
     def reset_led_screen(self):
+        if self.led_output_combo.currentData() == 'desktop':
+            manager = getattr(self.led_service, 'desktop_display', None)
+            if manager:
+                manager.dismiss(self.screen_panel.screens[self.screen_panel.index]['id'])
+            if getattr(self, '_desktop_test_window', None):
+                self._desktop_test_window.close()
+            return
         if hasattr(self.led_service, "restore_target"):
             self._run_led_action(lambda values: self.led_service.restore_target(values["ip"], values["port"]))
             return

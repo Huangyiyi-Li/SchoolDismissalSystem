@@ -44,6 +44,11 @@ def main():
         operation_logger=default_operation_logger,
     )
     
+    from src.ui.desktop_display import DesktopDisplayManager
+    desktop_display = DesktopDisplayManager(config_manager, led_service, app)
+    led_service.desktop_display = desktop_display
+    app.aboutToQuit.connect(desktop_display.shutdown)
+
     # API & Sync
     from src.services.api_service import ApiService
     from src.services.data_sync_service import DataSyncService

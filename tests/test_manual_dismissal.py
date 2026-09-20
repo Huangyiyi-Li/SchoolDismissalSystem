@@ -193,6 +193,12 @@ class ManualDismissalTests(unittest.TestCase):
         )
         self.assertEqual(manager.led_service.updates, [(1, "123")])
 
+    def test_server_command_activates_legacy_led_adapter_without_config(self):
+        manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
+        result = manager.process_manual_dismissal({"classType": 1, "classId": "123"})
+        self.assertEqual(result["result"], "success")
+        self.assertEqual(manager.led_service.window_states, [True])
+
     def test_led_failure_does_not_block_manual_voice_or_result(self):
         manager = self.make_manager(("一年级一班", "123", "40125", 1, "一(1)班", "一年级一班"))
 

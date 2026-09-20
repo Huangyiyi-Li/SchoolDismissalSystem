@@ -12,7 +12,7 @@ def test_settings_grouping_and_fixed_save():
             return ConfigManager.DEFAULT_CONFIG.get(key, default)
     dialog = SettingsDialog(Config())
     assert [dialog.navigation.item(i).text() for i in range(dialog.navigation.count())] == [
-        '学校绑定', '读卡设备', '语音播报', 'LED 屏', '高级设置']
+        '学校绑定', '读卡设备', '语音播报', '屏幕展示', '高级设置']
     dialog.show(); app.processEvents()
     assert dialog.school_id_edit.isVisible()
     assert not dialog.preview_scroll.isVisible()
