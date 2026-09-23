@@ -10,6 +10,7 @@ from ..services.led_dimensions import validate_led_dimensions
 from ..services.led_preview import (
     PreviewRefreshState,
     colorize_led_preview,
+    preview_readability_warning,
     scaled_preview_size,
 )
 from ..services.tts_settings import tts_settings_from_config
@@ -496,6 +497,11 @@ class SettingsDialog(QDialog):
         preview_layout.addWidget(self.preview_status_label)
         self.preview_actual_font_label = QLabel('实际字号：生成预览后显示')
         preview_layout.addWidget(self.preview_actual_font_label)
+        self.preview_readability_label = QLabel('')
+        self.preview_readability_label.setWordWrap(True)
+        self.preview_readability_label.setStyleSheet('color:#9a3412;background:#fff7ed;padding:6px;')
+        self.preview_readability_label.hide()
+        preview_layout.addWidget(self.preview_readability_label)
 
         preview_controls = QHBoxLayout()
         self.preview_generate_btn = QPushButton("生成预览")
@@ -1135,6 +1141,8 @@ class SettingsDialog(QDialog):
             else "、".join(values["visible_grades"])
         )
         self._preview_color_mode = values["color_mode"]
+        self._preview_source_width = values['width']
+        self._preview_source_height = values['height']
         self._preview_pages = payload["pages"]
         self._preview_metrics = payload.get('metrics', [])
         try:
@@ -1177,6 +1185,12 @@ class SettingsDialog(QDialog):
                 f"本页实际字号：标题 {metric.get('title_px', 0)} px · "
                 f"行列 {metric.get('header_px', 0)} px · "
                 f"状态 {metric.get('cell_px', 0)} px")
+            warning = preview_readability_warning(
+                metric, self._preview_source_width, self._preview_source_height)
+            self.preview_readability_label.setText(warning)
+            self.preview_readability_label.setVisible(bool(warning))
+        else:
+            self.preview_readability_label.hide()
         try:
             preview_image = colorize_led_preview(
                 self._preview_pages[self._preview_index],
@@ -1199,6 +1213,8 @@ class SettingsDialog(QDialog):
 
     def _show_preview_message(self, message):
         self._preview_source_pixmap = None
+        if hasattr(self, 'preview_readability_label'):
+            self.preview_readability_label.hide()
         self.preview_label.clear()
         self.preview_label.setText(message)
         viewport_size = self.preview_scroll.viewport().size()

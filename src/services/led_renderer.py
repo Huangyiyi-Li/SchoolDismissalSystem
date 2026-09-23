@@ -305,14 +305,41 @@ def _draw_title(draw, title, box, fill=1, preferred=22, scale_percent=None):
         return 0
     x1, y1, x2, y2 = box
     line_height = (y2 - y1) / len(lines)
-    if scale_percent is not None:
-        limit = max(1, int(min(x2 - x1 - 4, line_height - 2)))
-        preferred = min(
-            _fit_font(draw, line, max(1, x2 - x1 - 4),
-                      max(1, int(line_height) - 2), preferred=limit).size
-            for line in lines
+    limit = max(1, int(min(x2 - x1 - 4, line_height - 2)))
+    horizontal_fit = min(
+        _fit_font(draw, line, max(1, x2 - x1 - 4),
+                  max(1, int(line_height) - 2), preferred=limit).size
+        for line in lines
+    )
+    if scale_percent is None:
+        horizontal_size = min(preferred, horizontal_fit)
+    else:
+        horizontal_size = max(1, round(horizontal_fit * int(scale_percent) / 100))
+    # A narrow LED side band cannot hold several Chinese characters on one
+    # horizontal line. Stack them vertically when that yields larger glyphs.
+    if x2 - x1 <= 64 and y2 - y1 > x2 - x1:
+        columns = [list(line.replace(' ', '')) for line in lines]
+        column_width = (x2 - x1) / len(columns)
+        slot_height = min((y2 - y1) / len(chars) for chars in columns)
+        vertical_limit = max(1, int(min(column_width - 2, slot_height - 2)))
+        vertical_fit = min(
+            _fit_font(draw, char, max(1, int(column_width) - 2),
+                      max(1, int(slot_height) - 2), preferred=vertical_limit).size
+            for chars in columns for char in chars
         )
-        preferred = max(1, round(preferred * int(scale_percent) / 100))
+        vertical_size = (min(preferred, vertical_fit) if scale_percent is None
+                         else max(1, round(vertical_fit * int(scale_percent) / 100)))
+        if vertical_size > horizontal_size:
+            for column, chars in enumerate(columns):
+                for index, char in enumerate(chars):
+                    left = x1 + column * column_width
+                    top = y1 + index * (y2 - y1) / len(chars)
+                    _draw_centered(draw, (int(left), int(top),
+                                          int(left + column_width),
+                                          int(top + (y2 - y1) / len(chars))),
+                                   char, preferred=vertical_size, fill=fill)
+            return vertical_size
+    preferred = horizontal_size
     for index, line in enumerate(lines):
         _draw_centered(
             draw,
@@ -522,7 +549,11 @@ def render_led_pages(
         if metrics is not None:
             metrics.append({'kind': 'admin', 'header_px': page_header_size,
                             'cell_px': page_cell_size,
-                            'title_px': title_size if show_title else 0})
+                            'title_px': title_size if show_title else 0,
+                            'row_count': max((len(rows) for rows in page.regions), default=0),
+                            'column_count': max((len(_admin_headers(rows, class_type))
+                                                 for rows in page.regions), default=0),
+                            'max_status_chars': max(map(len, shown_statuses), default=0)})
         for region_index in range(region_count):
             rows = page.regions[region_index] if region_index < len(page.regions) else []
             actual_row_count = max(1, len(rows))

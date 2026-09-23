@@ -58,3 +58,22 @@ def scaled_preview_size(width, height, zoom_percent):
         max(1, round(int(width) * scale)),
         max(1, round(int(height) * scale)),
     )
+
+
+def preview_readability_warning(metric, width, height):
+    """Explain when the native LED bitmap is too dense to read after zooming."""
+    sizes = [int(metric.get(key) or 0) for key in ('title_px', 'header_px', 'cell_px')]
+    sizes = [size for size in sizes if size > 0]
+    if not sizes or min(sizes) >= 8:
+        return ''
+    suggestions = []
+    if metric.get('row_count', 0) > 2:
+        suggestions.append('把年级拆到更多轮播页')
+    if metric.get('column_count', 0) >= 4 and metric.get('max_status_chars', 0) > 1:
+        suggestions.append('将状态文案改为单字或空心/实心圆')
+    if metric.get('title_px', 0) and metric['title_px'] < 8:
+        suggestions.append('缩短或隐藏标题')
+    if not suggestions:
+        suggestions.append('减少同页内容，或使用更宽的屏幕')
+    return (f'当前 {width}×{height} 原生像素中最小文字仅 {min(sizes)} px，实体屏难以辨认；'
+            '放大预览不会增加屏幕像素。建议' + '，'.join(suggestions) + '。')

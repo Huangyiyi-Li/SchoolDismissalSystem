@@ -27,6 +27,18 @@ def test_custom_grade_pages_create_expected_rotation_files(tmp_path):
     assert all(path.stat().st_size > 0 for path in pages)
 
 
+def test_narrow_led_title_stacks_characters_instead_of_using_five_pixel_text(tmp_path):
+    classes = [dict(class_id=f'{grade}-{number}', class_type=1,
+                    grade_name=f'{grade}年级', class_show_name=f'{number}班',
+                    source_order=grade * 10 + number)
+               for grade in range(1, 7) for number in range(1, 7)]
+    metrics = []
+    r.render_led_pages('数智家校\n放学系统', classes, {}, tmp_path,
+                       width=192, height=96, grades_per_page=6, metrics=metrics)
+    assert metrics[0]['title_px'] >= 8
+    assert metrics[0]['cell_px'] < 8  # Six columns of full status text are still too dense.
+
+
 @pytest.mark.parametrize('label,expected', [('1.1 班', '1班'), ('4.4班', '4班'),
     ('４．０４ 班', '4班'), ('四（4）班', '4班'), ('一年级三班', '3班'), ('向日葵班', '向日葵班')])
 def test_normalizes_only_recognizable_class_numbers(label, expected):

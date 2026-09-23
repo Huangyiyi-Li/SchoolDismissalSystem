@@ -1,7 +1,11 @@
 import os
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
+
+from PIL import Image
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -241,6 +245,23 @@ class SettingsPreviewTests(unittest.TestCase):
         self.assertEqual(kwargs['grade_pages'], [['一年级', '二年级'], ['三年级']])
         self.assertEqual(kwargs['status_labels']['已放学'], '●')
         self.assertEqual(kwargs['status_colors']['已放学'], 'yellow')
+
+    def test_small_led_preview_displays_legibility_warning(self):
+        dialog, _service = self.make_dialog()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'preview.bmp'
+            Image.new('1', (192, 96), 0).save(path)
+            dialog._preview_pages = [path]
+            dialog._preview_metrics = [{
+                'kind': 'admin', 'title_px': 10, 'header_px': 6, 'cell_px': 6,
+                'row_count': 6, 'column_count': 6, 'max_status_chars': 3,
+            }]
+            dialog._preview_source_width = 192
+            dialog._preview_source_height = 96
+            dialog._preview_color_mode = 'single'
+            dialog._show_preview_page()
+            self.assertIn('6 px', dialog.preview_readability_label.text())
+            self.assertIn('空心/实心圆', dialog.preview_readability_label.text())
 
 
 if __name__ == "__main__":

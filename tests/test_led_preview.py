@@ -4,10 +4,22 @@ from pathlib import Path
 
 from PIL import Image
 
-from src.services.led_preview import colorize_led_preview, scaled_preview_size
+from src.services.led_preview import (colorize_led_preview,
+                                      preview_readability_warning, scaled_preview_size)
 
 
 class LedPreviewTests(unittest.TestCase):
+    def test_unreadable_native_bitmap_explains_the_actual_constraint(self):
+        message = preview_readability_warning(
+            {'kind': 'admin', 'title_px': 10, 'header_px': 6, 'cell_px': 6,
+             'row_count': 6, 'column_count': 6, 'max_status_chars': 3}, 192, 96)
+        self.assertIn('6 px', message)
+        self.assertIn('年级拆到更多轮播页', message)
+        self.assertIn('空心/实心圆', message)
+        self.assertIn('放大预览不会增加屏幕像素', message)
+        self.assertEqual(preview_readability_warning(
+            {'header_px': 10, 'cell_px': 10, 'title_px': 10}, 192, 96), '')
+
     def test_monochrome_led_bitmap_is_tinted_red_for_local_preview(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "page.bmp"
