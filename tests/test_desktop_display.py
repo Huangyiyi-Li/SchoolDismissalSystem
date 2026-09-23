@@ -283,17 +283,16 @@ def test_duplicate_enabled_pc_monitor_rejected_but_disabled_draft_allowed():
     validate_led_setup(screens, plans)
 
 
-def test_restore_auto_layout_clears_previous_manual_sizes(app):
+def test_restore_auto_layout_resets_relative_size(app):
     from tests.test_multi_screen_settings import dialog
     _, widget = dialog()
     try:
-        widget.led_header_font_size_spin.setValue(12)
-        widget.led_cell_font_size_spin.setValue(24)
+        widget.led_table_scale_slider.setValue(70)
+        widget.led_title_scale_slider.setValue(60)
         assert hasattr(widget, 'led_auto_layout_btn')
         widget.led_auto_layout_btn.click()
-        assert widget.led_header_font_size_spin.value() == 0
-        assert widget.led_cell_font_size_spin.value() == 0
-        assert widget.led_title_font_size_spin.value() == 0
+        assert widget.led_table_scale_slider.value() == 100
+        assert widget.led_title_scale_slider.value() == 100
         assert widget._preview_state.dirty
     finally:
         widget.close()

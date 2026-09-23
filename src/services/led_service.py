@@ -627,6 +627,10 @@ class LedService:
                 width=width,
                 height=height,
                 color_mode=color_mode,
+                status_labels=self.config.get('led_status_labels'),
+                status_colors=self.config.get('led_status_colors'),
+                table_scale_percent=self.config.get('led_table_scale_percent', 100),
+                title_scale_percent=self.config.get('led_title_scale_percent', 100),
             )
             result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),
@@ -663,6 +667,12 @@ class LedService:
         visible_grades=None,
         title_position=None,
         pixel_scale=1.0,
+        status_labels=None,
+        status_colors=None,
+        table_scale_percent=None,
+        title_scale_percent=None,
+        metrics=None,
+        grade_pages=None,
     ):
         width = int(width if width is not None else self.config.get("led_width", 1024))
         height = int(height if height is not None else self.config.get("led_height", 96))
@@ -716,11 +726,21 @@ class LedService:
             if cell_font_size is not None
             else self.config.get("led_cell_font_size", 0)
         )
+        active_status_labels = (status_labels if status_labels is not None
+                                else self.config.get('led_status_labels'))
+        active_status_colors = (status_colors if status_colors is not None
+                                else self.config.get('led_status_colors'))
+        active_table_scale = int(table_scale_percent if table_scale_percent is not None
+                                 else self.config.get('led_table_scale_percent', 100))
+        active_title_scale = int(title_scale_percent if title_scale_percent is not None
+                                 else self.config.get('led_title_scale_percent', 100))
         classes_by_type = self._filter_classes_by_grades(
             classes_by_type,
             grade_filter_mode=grade_filter_mode,
             visible_grades=visible_grades,
         )
+        active_grade_pages = (grade_pages if grade_pages is not None
+                              else self.config.get('led_grade_pages', []))
         pages = []
         for class_type in (1, 2):
             classes = classes_by_type.get(class_type) or []
@@ -744,6 +764,11 @@ class LedService:
                     title_font_size=active_title_font_size,
                     header_font_size=active_header_font_size,
                     cell_font_size=active_cell_font_size,
+                    status_labels=active_status_labels,
+                    status_colors=active_status_colors,
+                    table_scale_percent=active_table_scale,
+                    title_scale_percent=active_title_scale,
+                    metrics=metrics,
                 )
             else:
                 rendered = render_led_pages(
@@ -764,6 +789,12 @@ class LedService:
                     title_font_size=active_title_font_size,
                     header_font_size=active_header_font_size,
                     cell_font_size=active_cell_font_size,
+                    status_labels=active_status_labels,
+                    status_colors=active_status_colors,
+                    table_scale_percent=active_table_scale,
+                    title_scale_percent=active_title_scale,
+                    metrics=metrics,
+                    grade_pages=active_grade_pages,
                 )
             pages.extend(rendered)
         return pages
@@ -788,6 +819,12 @@ class LedService:
         visible_grades=None,
         title_position=None,
         pixel_scale=1.0,
+        status_labels=None,
+        status_colors=None,
+        table_scale_percent=None,
+        title_scale_percent=None,
+        metrics=None,
+        grade_pages=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -829,6 +866,12 @@ class LedService:
                 visible_grades=visible_grades,
                 title_position=title_position,
                 pixel_scale=pixel_scale,
+                status_labels=status_labels,
+                status_colors=status_colors,
+                table_scale_percent=table_scale_percent,
+                title_scale_percent=title_scale_percent,
+                metrics=metrics,
+                grade_pages=grade_pages,
             )
 
     def test_connection(self, ip=None, port=None):
@@ -956,6 +999,11 @@ class LedService:
         visible_grades=None,
         title_position=None,
         pixel_scale=1.0,
+        status_labels=None,
+        status_colors=None,
+        table_scale_percent=None,
+        title_scale_percent=None,
+        grade_pages=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -1043,6 +1091,11 @@ class LedService:
                 visible_grades=visible_grades,
                 title_position=title_position,
                 pixel_scale=pixel_scale,
+                status_labels=status_labels,
+                status_colors=status_colors,
+                table_scale_percent=table_scale_percent,
+                title_scale_percent=title_scale_percent,
+                grade_pages=grade_pages,
             )
             result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),

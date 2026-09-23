@@ -11,28 +11,32 @@ LED_RED = (255, 0, 0)
 LED_YELLOW = (255, 255, 0)
 LED_GREEN = (0, 255, 0)
 LED_BLACK = (0, 0, 0)
+STATUS_KEYS = ('未放学', '放学中', '已放学')
+STATUS_COLORS = {'red': LED_RED, 'yellow': LED_YELLOW, 'green': LED_GREEN}
+DEFAULT_STATUS_COLORS = {'未放学': 'yellow', '放学中': 'red', '已放学': 'green'}
 
 
 def normalize_color_mode(value):
     return "double" if str(value or "").strip().lower() == "double" else "single"
 
 
-def display_status(status, color_mode="single"):
+def status_labels_for_mode(labels=None, color_mode="single"):
+    defaults = {'未放学': '未放学' if normalize_color_mode(color_mode) == 'double' else '',
+                '放学中': '放学中', '已放学': '已放学'}
+    return {**defaults, **(labels or {})}
+
+
+def display_status(status, color_mode="single", labels=None):
     status = str(status or "").strip()
-    if normalize_color_mode(color_mode) == "double" and not status:
-        return "未放学"
-    return status
+    return status_labels_for_mode(labels, color_mode).get(status or '未放学', status)
 
 
-def status_color(status, color_mode="single"):
+def status_color(status, color_mode="single", colors=None):
     if normalize_color_mode(color_mode) != "double":
         return 1
-    status = str(status or "").strip()
-    if status == "已放学":
-        return LED_GREEN
-    if status == "放学中":
-        return LED_RED
-    return LED_YELLOW
+    status = str(status or "").strip() or '未放学'
+    names = {**DEFAULT_STATUS_COLORS, **(colors or {})}
+    return STATUS_COLORS[names.get(status, 'yellow')]
 
 
 @dataclass(frozen=True)
@@ -103,11 +107,24 @@ def build_led_page_layout(
     grades_per_page=2,
     regions_per_page=1,
     class_type=1,
+    grade_pages=None,
 ):
     rows_per_region = max(1, int(grades_per_page))
     region_count = max(1, int(regions_per_page))
     rows = _build_rows(classes, class_type)
     max_columns = max((len(row.classes) for row in rows), default=0)
+    if grade_pages and class_type == 1:
+        by_grade = {row.grade_name: row for row in rows}
+        pages = []
+        for group in grade_pages:
+            screen_rows = [by_grade[grade] for grade in group if grade in by_grade]
+            if not screen_rows:
+                continue
+            region_size = max(1, (len(screen_rows) + region_count - 1) // region_count)
+            regions = [screen_rows[index * region_size:(index + 1) * region_size]
+                       for index in range(region_count)]
+            pages.append(LedPage(regions=regions))
+        return LedPageLayout(pages=pages, max_columns=max_columns)
     rows_per_screen = rows_per_region * region_count
     pages = []
     for page_start in range(0, len(rows), rows_per_screen):
@@ -282,12 +299,20 @@ def _draw_centered_club_name(
     _draw_centered_lines(draw, box, [shown], font, fill=fill)
 
 
-def _draw_title(draw, title, box, fill=1, preferred=22):
+def _draw_title(draw, title, box, fill=1, preferred=22, scale_percent=None):
     lines = [line.strip() for line in str(title or "").splitlines() if line.strip()]
     if not lines:
-        return
+        return 0
     x1, y1, x2, y2 = box
     line_height = (y2 - y1) / len(lines)
+    if scale_percent is not None:
+        limit = max(1, int(min(x2 - x1 - 4, line_height - 2)))
+        preferred = min(
+            _fit_font(draw, line, max(1, x2 - x1 - 4),
+                      max(1, int(line_height) - 2), preferred=limit).size
+            for line in lines
+        )
+        preferred = max(1, round(preferred * int(scale_percent) / 100))
     for index, line in enumerate(lines):
         _draw_centered(
             draw,
@@ -296,6 +321,7 @@ def _draw_title(draw, title, box, fill=1, preferred=22):
             preferred=preferred,
             fill=fill,
         )
+    return preferred
 
 
 def _status_for(statuses, item):
@@ -342,7 +368,8 @@ def _admin_headers(rows, class_type):
     return numbered + [h for h in headers if h not in numbered]
 
 
-def _fit_admin_region(draw, rows, headers, width, height, header_size=0, cell_size=0):
+def _fit_admin_region(draw, rows, headers, width, height, header_size=0, cell_size=0,
+                      status_texts=None, table_scale_percent=100):
     """Solve font sizes and grade-column width together, reserving room for statuses.
 
     Automatic row/column/status text shares one size. Explicit font sizes remain
@@ -365,10 +392,16 @@ def _fit_admin_region(draw, rows, headers, width, height, header_size=0, cell_si
             return max((b[2]-b[0] for b in boxes), default=0), max((b[3]-b[1] for b in boxes), default=0)
         gw, gh = dimensions(grade_names, hf)
         hw, hh = dimensions(headers, hf)
-        sw, sh = dimensions(['未放学', '放学中', '已放学'], cf)
+        sw, sh = dimensions(status_texts or ['未放学', '放学中', '已放学'], cf)
         grade_width = gw + padding
         cell_width = max(hw, sw) + padding
         if grade_width + len(headers) * cell_width <= width and max(gh, hh, sh) + 4 <= row_height:
+            if not supplied:
+                # A percentage of the fitted maximum keeps the adjustment
+                # responsive even when width, rather than row height, limits it.
+                hs = cs = max(1, round(hs * table_scale_percent / 100))
+                gw, _ = dimensions(grade_names, _load_font(hs))
+                grade_width = gw + max(6, round(hs * 0.65))
             return hs, cs, grade_width
     # Extremely small LED viewports still reserve a nonzero data area; drawing
     # helpers skip any glyph that cannot fit rather than crossing a grid line.
@@ -392,8 +425,12 @@ def _top_title_pages(renderer, options):
         draw = ImageDraw.Draw(image)
         draw.rectangle((0, 0, width - 1, height - 1), outline=color)
         draw.line((0, band, width - 1, band), fill=color)
-        _draw_title(draw, ' '.join(str(title).splitlines()), (0, 0, width, band),
-                    fill=color, preferred=int(options['title_font_size'] or 22 * options['pixel_scale']))
+        title_size = _draw_title(draw, ' '.join(str(title).splitlines()),
+                                 (0, 0, width, band), fill=color,
+                                 preferred=int(options['title_font_size'] or 22 * options['pixel_scale']),
+                                 scale_percent=(None if options['title_font_size'] else options['title_scale_percent']))
+        if options.get('metrics') is not None:
+            options['metrics'][len(options['metrics']) - len(paths) + paths.index(path)]['title_px'] = title_size
         image.save(path, format='BMP')
     return paths
 
@@ -416,6 +453,12 @@ def render_led_pages(
     cell_font_size=0,
     title_position="left",
     pixel_scale=1.0,
+    status_labels=None,
+    status_colors=None,
+    table_scale_percent=100,
+    title_scale_percent=100,
+    metrics=None,
+    grade_pages=None,
 ):
     if show_title and title_position == "top":
         return _top_title_pages(render_led_pages, locals())
@@ -426,6 +469,7 @@ def render_led_pages(
         grades_per_page=rows_per_region,
         regions_per_page=region_count,
         class_type=class_type,
+        grade_pages=grade_pages,
     )
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -448,8 +492,9 @@ def render_led_pages(
     image_mode = "RGB" if color_mode == "double" else "1"
     background = LED_BLACK if color_mode == "double" else 0
     title_preferred = int(title_font_size or 22 * pixel_scale)
-    header_preferred = int(header_font_size or 18 * pixel_scale)
-    cell_preferred = int(cell_font_size or 18 * pixel_scale)
+    header_preferred = int(header_font_size or 18 * pixel_scale * table_scale_percent / 100)
+    cell_preferred = int(cell_font_size or 18 * pixel_scale * table_scale_percent / 100)
+    shown_statuses = list(status_labels_for_mode(status_labels, color_mode).values())
     for page_index, page in enumerate(layout.pages, start=1):
         image = Image.new(image_mode, (width, height), background)
         draw = ImageDraw.Draw(image)
@@ -457,21 +502,27 @@ def render_led_pages(
 
         if show_title:
             draw.line((title_width, 0, title_width, height), fill=layout_color)
-            _draw_title(
+            title_size = _draw_title(
                 draw,
                 school_title,
                 (0, 0, title_width, height),
                 fill=layout_color,
                 preferred=title_preferred,
+                scale_percent=(None if title_font_size else title_scale_percent),
             )
 
         region_metrics = [
             _fit_admin_region(draw, rows, _admin_headers(rows, class_type),
-                              int(region_width), height, header_font_size, cell_font_size)
+                              int(region_width), height, header_font_size, cell_font_size,
+                              shown_statuses, table_scale_percent)
             for rows in page.regions if rows
         ]
         page_header_size = min((m[0] for m in region_metrics), default=1)
         page_cell_size = min((m[1] for m in region_metrics), default=1)
+        if metrics is not None:
+            metrics.append({'kind': 'admin', 'header_px': page_header_size,
+                            'cell_px': page_cell_size,
+                            'title_px': title_size if show_title else 0})
         for region_index in range(region_count):
             rows = page.regions[region_index] if region_index < len(page.regions) else []
             actual_row_count = max(1, len(rows))
@@ -485,7 +536,7 @@ def render_led_pages(
             headers = _admin_headers(rows, class_type)
             header_preferred, cell_preferred, grade_width = _fit_admin_region(
                 draw, rows, headers, region_x2 - region_x1, height,
-                page_header_size, page_cell_size,
+                page_header_size, page_cell_size, shown_statuses,
             )
             data_x1 = region_x1 + grade_width
             draw.line((data_x1, 0, data_x1, height), fill=layout_color)
@@ -536,9 +587,9 @@ def render_led_pages(
                     _draw_centered(
                         draw,
                         (x1, y1, x2, y2),
-                        display_status(raw_status, color_mode),
+                        display_status(raw_status, color_mode, status_labels),
                         preferred=cell_preferred,
-                        fill=status_color(raw_status, color_mode),
+                        fill=status_color(raw_status, color_mode, status_colors),
                     )
 
         path = output_dir / f"{filename_prefix}-{page_index:02d}.bmp"
@@ -565,6 +616,11 @@ def render_club_led_pages(
     cell_font_size=0,
     title_position="left",
     pixel_scale=1.0,
+    status_labels=None,
+    status_colors=None,
+    table_scale_percent=100,
+    title_scale_percent=100,
+    metrics=None,
 ):
     if show_title and title_position == "top":
         return _top_title_pages(render_club_led_pages, locals())
@@ -594,22 +650,42 @@ def render_club_led_pages(
     image_mode = "RGB" if color_mode == "double" else "1"
     background = LED_BLACK if color_mode == "double" else 0
     title_preferred = int(title_font_size or 22 * pixel_scale)
-    header_preferred = int(header_font_size or 14 * pixel_scale)
-    club_name_preferred = int(header_font_size or 16 * pixel_scale)
-    cell_preferred = int(cell_font_size or 12 * pixel_scale)
+    header_preferred = int(header_font_size or 14 * pixel_scale * table_scale_percent / 100)
+    club_name_preferred = int(header_font_size or 16 * pixel_scale * table_scale_percent / 100)
+    cell_preferred = int(cell_font_size or 12 * pixel_scale * table_scale_percent / 100)
     for page_index, page in enumerate(layout.pages, start=1):
+        if not header_font_size and not cell_font_size:
+            name_width, status_width = calculate_club_column_widths(int(group_width))
+            limit = max(1, min(header_height - 2, name_width - 4, status_width - 4))
+            fit_texts = [('社团名', name_width), ('状态', status_width)]
+            for row in page.rows:
+                fit_texts.extend((part, name_width) for part in split_club_name(row.grade_name))
+                fit_texts.append((display_status(_status_for(statuses, row.classes[0]),
+                                                 color_mode, status_labels), status_width))
+            maximum = min(_fit_font(ImageDraw.Draw(Image.new(image_mode, (1, 1))),
+                                    text or ' ', max(1, cell_width - 4),
+                                    max(1, header_height - 2), preferred=limit).size
+                          for text, cell_width in fit_texts)
+            fitted = max(1, round(maximum * table_scale_percent / 100))
+            header_preferred = club_name_preferred = cell_preferred = fitted
+        if metrics is not None:
+            metrics.append({'kind': 'club', 'header_px': header_preferred,
+                            'cell_px': cell_preferred})
         image = Image.new(image_mode, (width, height), background)
         draw = ImageDraw.Draw(image)
         draw.rectangle((0, 0, width - 1, height - 1), outline=layout_color)
         if show_title:
             draw.line((title_width, 0, title_width, height), fill=layout_color)
-            _draw_title(
+            title_size = _draw_title(
                 draw,
                 school_title,
                 (0, 0, title_width, height),
                 fill=layout_color,
                 preferred=title_preferred,
+                scale_percent=(None if title_font_size else title_scale_percent),
             )
+            if metrics is not None:
+                metrics[-1]['title_px'] = title_size
 
         for group_index in range(group_count):
             rows = page.regions[group_index] if group_index < len(page.regions) else []
@@ -659,9 +735,9 @@ def render_club_led_pages(
                 _draw_centered_single_line(
                     draw,
                     (status_x1, y1, group_x2, y2),
-                    display_status(raw_status, color_mode),
+                    display_status(raw_status, color_mode, status_labels),
                     preferred=cell_preferred,
-                    fill=status_color(raw_status, color_mode),
+                    fill=status_color(raw_status, color_mode, status_colors),
                 )
 
         path = output_dir / f"{filename_prefix}-{page_index:02d}.bmp"

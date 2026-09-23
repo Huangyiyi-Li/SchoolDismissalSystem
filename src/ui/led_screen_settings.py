@@ -17,10 +17,14 @@ VALUE_KEYS = {
     'page_seconds': 'led_page_seconds', 'grades_per_page': 'led_grades_per_page',
     'regions_per_page': 'led_layout_regions', 'grade_filter_mode': 'led_grade_filter_mode',
     'visible_grades': 'led_visible_grades', 'show_title': 'led_show_title',
+    'grade_pages': 'led_grade_pages',
     'title': 'led_school_title', 'club_rows_per_group': 'led_club_rows_per_group',
     'club_groups_per_page': 'led_club_groups_per_page',
     'title_font_size': 'led_title_font_size', 'header_font_size': 'led_header_font_size',
     'cell_font_size': 'led_cell_font_size',
+    'title_scale_percent': 'led_title_scale_percent',
+    'table_scale_percent': 'led_table_scale_percent',
+    'status_labels': 'led_status_labels', 'status_colors': 'led_status_colors',
 }
 TEXT_FIELDS = {
     'led_controller_ip': 'led_ip_edit', 'led_controller_port': 'led_port_edit',
@@ -93,7 +97,7 @@ class LedScreenSettings(QWidget):
             statuses.update(manager.statuses)
         for i, screen in enumerate(self.screens):
             plan = next(p for p in self.plans if p['id'] == screen['plan_id'])
-            settings = plan['settings']
+            settings = LedScreenConfig(self.dialog.config, screen, plan)
             grades = '全部年级' if settings.get('led_grade_filter_mode', 'all') == 'all' else '、'.join(settings.get('led_visible_grades', []))
             status = statuses.get(screen['id'], '未应用')
             if not screen['enabled'] and '失败' not in status:
@@ -126,7 +130,10 @@ class LedScreenSettings(QWidget):
         screen['settings'] = {k: v for k, v in settings.items() if k in LED_DEVICE_KEYS}
         plan = self.current_plan()
         plan['name'] = self.plan_name.text().strip()
-        plan['settings'] = {k: v for k, v in settings.items() if k in LED_PLAN_KEYS}
+        legacy_filter = {k: v for k, v in plan['settings'].items()
+                         if k in ('led_grade_filter_mode', 'led_visible_grades')}
+        plan['settings'] = {**legacy_filter, **{k: v for k, v in settings.items()
+                            if k in LED_PLAN_KEYS and k not in legacy_filter}}
         return True
 
     def load_form(self):
@@ -152,13 +159,22 @@ class LedScreenSettings(QWidget):
         self.dialog.led_all_grades_check.setChecked(cfg.get('led_grade_filter_mode') == 'all')
         for grade, checkbox in self.dialog.led_grade_checks.items():
             checkbox.setChecked(grade in cfg.get('led_visible_grades'))
+        self.dialog.led_grade_pages_edit.setPlainText('\n'.join(
+            '、'.join(page) for page in cfg.get('led_grade_pages', [])))
         self.dialog.led_show_title_check.setChecked(cfg.get('led_show_title'))
         self.dialog.led_title_edit.setPlainText(cfg.get('led_school_title'))
-        for key in ('led_title_font_size', 'led_header_font_size', 'led_cell_font_size'):
-            getattr(self.dialog, key + '_spin').setValue(int(cfg.get(key)))
+        self.dialog.led_title_scale_slider.setValue(int(cfg.get('led_title_scale_percent')))
+        self.dialog.led_table_scale_slider.setValue(int(cfg.get('led_table_scale_percent')))
+        from ..services.led_renderer import status_labels_for_mode, DEFAULT_STATUS_COLORS
+        labels = status_labels_for_mode(cfg.get('led_status_labels'), cfg.get('led_color_mode'))
+        colors = {**DEFAULT_STATUS_COLORS, **(cfg.get('led_status_colors') or {})}
+        for state in self.dialog.led_status_edits:
+            self.dialog.led_status_edits[state].setText(labels[state])
+            combo = self.dialog.led_status_color_combos[state]
+            combo.setCurrentIndex(combo.findData(colors[state]))
         self.dialog.update_output_controls()
         peers = [s['name'] for s in self.screens if s['plan_id'] == plan['id']]
-        self.scope_hint.setText('内容与样式共用于：' + '、'.join(peers) + '。展示方式、显示器、颜色与启用状态只影响当前屏；已放学延迟对全校生效。')
+        self.scope_hint.setText('标题、状态文案与字号共用于：' + '、'.join(peers) + '。年级筛选与每页年级、展示方式、显示器和颜色只影响当前屏；已放学延迟对全校生效。')
         self.dialog._preview_pages = []
         self.dialog._preview_index = 0
         self.dialog._preview_source_pixmap = None

@@ -144,9 +144,11 @@ class SettingsPreviewTests(unittest.TestCase):
         self.assertEqual(kwargs["club_rows_per_group"], 4)
         self.assertEqual(kwargs["club_groups_per_page"], 5)
         self.assertEqual(kwargs["color_mode"], "single")
-        self.assertEqual(kwargs["title_font_size"], 26)
-        self.assertEqual(kwargs["header_font_size"], 18)
-        self.assertEqual(kwargs["cell_font_size"], 14)
+        self.assertEqual(kwargs["title_font_size"], 0)
+        self.assertEqual(kwargs["header_font_size"], 0)
+        self.assertEqual(kwargs["cell_font_size"], 0)
+        self.assertEqual(kwargs['title_scale_percent'], 100)
+        self.assertEqual(kwargs['table_scale_percent'], 100)
 
     def test_all_grades_is_safe_default_and_disables_individual_choices(self):
         dialog, _service = self.make_dialog()
@@ -208,9 +210,9 @@ class SettingsPreviewTests(unittest.TestCase):
         dialog = SettingsDialog(config, led_service=FakeLedService())
         self.addCleanup(dialog.close)
 
-        self.assertEqual(dialog.led_title_font_size_spin.value(), 0)
-        self.assertEqual(dialog.led_title_font_size_spin.text(), "自动")
-        self.assertIn("放不下时自动缩小", dialog.led_font_size_hint.text())
+        self.assertEqual(dialog.led_title_scale_slider.value(), 100)
+        self.assertEqual(dialog.led_table_scale_slider.value(), 100)
+        self.assertIn("自动适配", dialog.led_font_size_hint.text())
 
     def test_dual_color_selection_updates_guidance_and_preview_request(self):
         dialog, service = self.make_dialog()
@@ -218,12 +220,27 @@ class SettingsPreviewTests(unittest.TestCase):
             dialog.led_color_mode_combo.findData("double")
         )
 
-        self.assertIn("未放学=黄", dialog.led_color_hint.text())
+        self.assertIn("双色状态的文字和颜色", dialog.led_color_hint.text())
         self.assertIn("256K", dialog.led_size_hint.text())
         dialog.preview_generate_btn.click()
 
         self.assertTrue(self.wait_until(lambda: len(service.preview_calls) == 1))
         self.assertEqual(service.preview_calls[0][1]["color_mode"], "double")
+
+    def test_custom_grade_pages_and_state_styles_are_forwarded_to_preview(self):
+        dialog, service = self.make_dialog()
+        dialog.led_grade_pages_edit.setPlainText('一年级、二年级\n三年级')
+        dialog.led_status_edits['未放学'].setText('')
+        dialog.led_status_edits['放学中'].setText('○')
+        dialog.led_status_edits['已放学'].setText('●')
+        combo = dialog.led_status_color_combos['已放学']
+        combo.setCurrentIndex(combo.findData('yellow'))
+        dialog.preview_generate_btn.click()
+        self.assertTrue(self.wait_until(lambda: len(service.preview_calls) == 1))
+        kwargs = service.preview_calls[0][1]
+        self.assertEqual(kwargs['grade_pages'], [['一年级', '二年级'], ['三年级']])
+        self.assertEqual(kwargs['status_labels']['已放学'], '●')
+        self.assertEqual(kwargs['status_colors']['已放学'], 'yellow')
 
 
 if __name__ == "__main__":

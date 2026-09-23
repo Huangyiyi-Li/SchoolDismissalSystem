@@ -21,6 +21,28 @@ def test_migration_preserves_legacy_and_is_independent():
     assert config.get('led_visible_grades') == ['一年级']
 
 
+def test_grade_selection_overrides_shared_plan_for_one_screen():
+    from src.services.config_manager import LedScreenConfig
+    parent = FakeConfig()
+    plan = {'id': 'shared', 'settings': {'led_grade_filter_mode': 'selected',
+                                         'led_visible_grades': ['一年级']}}
+    first = {'id': 'first', 'enabled': True, 'settings': {
+        'led_grade_filter_mode': 'selected', 'led_visible_grades': ['二年级']}}
+    second = {'id': 'second', 'enabled': True, 'settings': {}}
+    assert LedScreenConfig(parent, first, plan).get('led_visible_grades') == ['二年级']
+    assert LedScreenConfig(parent, second, plan).get('led_visible_grades') == ['一年级']
+
+
+def test_grade_pages_are_independent_for_screens_sharing_a_plan():
+    from src.services.config_manager import LedScreenConfig
+    plan = {'id': 'shared', 'settings': {}}
+    first = {'enabled': True, 'settings': {'led_grade_pages': [['二年级', '三年级'], ['四年级']]}}
+    second = {'enabled': True, 'settings': {'led_grade_pages': [['四年级'], ['五年级']]}}
+    parent = FakeConfig({})
+    assert LedScreenConfig(parent, first, plan).get('led_grade_pages') == [['二年级', '三年级'], ['四年级']]
+    assert LedScreenConfig(parent, second, plan).get('led_grade_pages') == [['四年级'], ['五年级']]
+
+
 def make_service(tmp_path, async_output=False, bridges=None):
     cls = getattr(led_service, 'MultiScreenLedService', None)
     assert cls is not None, 'a multi-screen status owner and independent outputs are required'

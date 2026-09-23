@@ -41,7 +41,11 @@ def render_desktop_frames(values, classes_by_type, statuses, size):
                   # LED font overrides are deliberately ignored here; otherwise
                   # an old 8px LED setting produces a tiny table on a 1080p PC.
                   title_font_size=0,
-                  header_font_size=0, cell_font_size=0)
+                  header_font_size=0, cell_font_size=0,
+                  status_labels=values.get('led_status_labels'),
+                  status_colors=values.get('led_status_colors'),
+                  table_scale_percent=values.get('led_table_scale_percent', 100),
+                  title_scale_percent=values.get('led_title_scale_percent', 100))
     frames = []
     with tempfile.TemporaryDirectory(prefix='school-desktop-') as folder:
         for kind, classes in sorted(classes_by_type.items()):
@@ -52,7 +56,8 @@ def render_desktop_frames(values, classes_by_type, statuses, size):
             if kind == 1:
                 paths = render_led_pages(values['led_school_title'], classes, statuses, folder,
                                          grades_per_page=values['led_grades_per_page'],
-                                         regions_per_page=values['led_layout_regions'], **common)
+                                         regions_per_page=values['led_layout_regions'],
+                                         grade_pages=values.get('led_grade_pages', []), **common)
             else:
                 paths = render_club_led_pages(values['led_school_title'], classes, statuses, folder,
                                               rows_per_group=values['led_club_rows_per_group'],

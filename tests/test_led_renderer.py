@@ -93,6 +93,40 @@ class LedRendererTests(unittest.TestCase):
         self.assertEqual(display_status("放学中", "double"), "放学中")
         self.assertEqual(display_status("已放学", "double"), "已放学")
 
+    def test_status_copy_can_be_blank_or_custom_without_changing_state(self):
+        labels = {"未放学": "", "放学中": "○", "已放学": "已放"}
+        self.assertEqual(display_status("", "double", labels), "")
+        self.assertEqual(display_status("放学中", "double", labels), "○")
+        self.assertEqual(display_status("已放学", "double", labels), "已放")
+
+    def test_custom_status_color_is_used_only_on_dual_color_screen(self):
+        from src.services.led_renderer import status_color
+        colors = {'未放学': 'red', '放学中': 'green', '已放学': 'yellow'}
+        self.assertEqual(status_color('放学中', 'double', colors), (0, 255, 0))
+        self.assertEqual(status_color('已放学', 'double', colors), (255, 255, 0))
+        self.assertEqual(status_color('放学中', 'single', colors), 1)
+
+    def test_custom_status_text_and_color_reach_rendered_cells(self):
+        from src.services import led_renderer as renderer
+        classes = [make_class('101', '一年级', 0), make_class('102', '一年级', 1)]
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(renderer, '_draw_centered') as draw:
+            renderer.render_led_pages('', classes, {(1, '101'): '放学中', (1, '102'): '已放学'},
+                Path(tmpdir), show_title=False, color_mode='double',
+                status_labels={'未放学': '', '放学中': '○', '已放学': '●'},
+                status_colors={'未放学': 'red', '放学中': 'green', '已放学': 'yellow'})
+        cells = {call.args[2]: call.kwargs['fill'] for call in draw.call_args_list}
+        self.assertEqual(cells['○'], (0, 255, 0))
+        self.assertEqual(cells['●'], (255, 255, 0))
+
+    def test_title_size_percentage_changes_computed_font(self):
+        from PIL import ImageDraw
+        from src.services import led_renderer as renderer
+        image = Image.new('1', (300, 100))
+        draw = ImageDraw.Draw(image)
+        large = renderer._draw_title(draw, '学校标题', (0, 0, 300, 100), scale_percent=100)
+        small = renderer._draw_title(draw, '学校标题', (0, 0, 300, 100), scale_percent=50)
+        self.assertLess(small, large)
+
     def test_dual_color_page_contains_all_three_status_colors(self):
         classes = [
             make_class("101", "一年级", 0),

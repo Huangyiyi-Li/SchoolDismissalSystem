@@ -81,7 +81,7 @@ def test_missing_grade_in_another_plan_is_preserved_on_open():
         panel = widget.screen_panel
         panel.add_screen()
         setup = panel.values()
-        setup[1][1]['settings'].update(led_grade_filter_mode='selected', led_visible_grades=['六年级'])
+        setup[0][1]['settings'].update(led_grade_filter_mode='selected', led_visible_grades=['六年级'])
         config = FakeConfig()
         config.values.update(led_screens=setup[0], led_display_plans=setup[1])
         second = SettingsDialog(config, led_service=FakeLedService())
@@ -91,6 +91,22 @@ def test_missing_grade_in_another_plan_is_preserved_on_open():
             assert second.led_grade_checks['六年级'].isChecked()
         finally:
             second.close()
+    finally:
+        widget.close()
+
+
+def test_each_screen_keeps_its_own_rotation_pages():
+    app, widget = dialog()
+    try:
+        panel = widget.screen_panel
+        widget.led_grade_pages_edit.setPlainText('一年级、二年级\n三年级')
+        panel.add_screen()
+        widget.led_grade_pages_edit.setPlainText('一年级\n二年级、三年级')
+        assert panel.store_form()
+        panel.screen_list.setCurrentRow(0)
+        assert widget.led_grade_pages_edit.toPlainText() == '一年级、二年级\n三年级'
+        panel.screen_list.setCurrentRow(1)
+        assert widget.led_grade_pages_edit.toPlainText() == '一年级\n二年级、三年级'
     finally:
         widget.close()
 

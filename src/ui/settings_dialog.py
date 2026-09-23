@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QMessageBox, QFormLayout,
                              QCheckBox, QPlainTextEdit, QGroupBox, QWidget,
                              QScrollArea, QFrame, QComboBox, QSpinBox,
-                             QDoubleSpinBox, QGridLayout, QListWidget, QStackedWidget, QTabWidget)
+                             QDoubleSpinBox, QGridLayout, QListWidget, QStackedWidget, QTabWidget, QSlider)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from ..services.device_identity import format_device_no_from_node, normalize_device_no
@@ -281,6 +281,11 @@ class SettingsDialog(QDialog):
         )
         for plan in self.config.get("led_display_plans", []):
             saved_grades.extend(self._normalize_grade_names(plan.get("settings", {}).get("led_visible_grades", [])))
+        for screen in self.config.get('led_screens', []):
+            settings = screen.get('settings', {})
+            saved_grades.extend(self._normalize_grade_names(settings.get('led_visible_grades', [])))
+            for page in settings.get('led_grade_pages', []):
+                saved_grades.extend(self._normalize_grade_names(page))
         available_grades = []
         if self.led_service and hasattr(
             self.led_service, "get_available_admin_grades"
@@ -321,6 +326,13 @@ class SettingsDialog(QDialog):
         self.led_all_grades_check.toggled.connect(self.mark_led_preview_stale)
         self._update_led_grade_filter_state()
         led_form.addRow("显示年级:", grade_filter_widget)
+        self.led_grade_pages_edit = QPlainTextEdit()
+        self.led_grade_pages_edit.setMaximumHeight(92)
+        self.led_grade_pages_edit.setPlaceholderText("留空自动分页；每行一页，例如：\n二年级、三年级\n四年级\n五年级\n六年级")
+        led_form.addRow("轮播每页年级:", self.led_grade_pages_edit)
+        grade_pages_hint = QLabel("每行对应一页，年级之间用顿号分隔；留空按每区行数自动分页。每块物理屏可单独设置。")
+        grade_pages_hint.setWordWrap(True)
+        led_form.addRow("", grade_pages_hint)
 
         self.led_club_rows_edit = QLineEdit(
             str(self.config.get("led_club_rows_per_group", 4))
@@ -350,8 +362,8 @@ class SettingsDialog(QDialog):
         self.led_show_title_check.setChecked(self.config.get("led_show_title", True))
         led_form.addRow("标题区域:", self.led_show_title_check)
 
-        self.led_auto_layout_btn = QPushButton("恢复自动字号与列宽")
-        self.led_auto_layout_btn.setToolTip("清除手动字号，按单元格空间统一适配行列标题及状态文字，并按文字宽度计算年级列宽。")
+        self.led_auto_layout_btn = QPushButton("恢复最大自适应文字")
+        self.led_auto_layout_btn.setToolTip("标题和表格恢复当前页面能容纳的最大字号。")
         self.led_auto_layout_btn.clicked.connect(self.restore_auto_layout)
         led_form.addRow("自动适配:", self.led_auto_layout_btn)
         self.led_title_position_combo = QComboBox()
@@ -368,24 +380,32 @@ class SettingsDialog(QDialog):
         self.led_show_title_check.toggled.connect(self.led_title_edit.setEnabled)
         led_form.addRow("标题内容:", self.led_title_edit)
 
-        self.led_title_font_size_spin = self._make_font_size_spin(
-            "led_title_font_size"
-        )
-        led_form.addRow("标题字号:", self.led_title_font_size_spin)
-        self.led_header_font_size_spin = self._make_font_size_spin(
-            "led_header_font_size"
-        )
-        led_form.addRow("行列标题字号:", self.led_header_font_size_spin)
-        self.led_cell_font_size_spin = self._make_font_size_spin(
-            "led_cell_font_size"
-        )
-        led_form.addRow("单元格内容字号:", self.led_cell_font_size_spin)
+        self.led_title_scale_slider = self._make_font_scale_slider('led_title_scale_percent')
+        led_form.addRow("标题文字大小:", self._font_scale_control(self.led_title_scale_slider))
+        self.led_table_scale_slider = self._make_font_scale_slider('led_table_scale_percent')
+        led_form.addRow("表格文字大小:", self._font_scale_control(self.led_table_scale_slider))
         self.led_font_size_hint = QLabel(
-            "自动会使用原有自适应字号；设置固定像素后，放不下时自动缩小，避免文字越界。"
+            "100% 是当前画面可容纳的最大字号；向左拖动会等比例缩小，尺寸或内容变化后仍自动适配。生成预览可查看实际像素。"
         )
         self.led_font_size_hint.setWordWrap(True)
         self.led_font_size_hint.setStyleSheet("color:#6b7280;font-size:12px;")
         led_form.addRow("", self.led_font_size_hint)
+        self.led_status_edits = {}
+        self.led_status_color_combos = {}
+        for state in ('未放学', '放学中', '已放学'):
+            row = QHBoxLayout()
+            edit = QLineEdit()
+            edit.setPlaceholderText('留空不显示')
+            combo = QComboBox()
+            for text, color in [('红色', 'red'), ('黄色', 'yellow'), ('绿色', 'green')]:
+                combo.addItem(text, color)
+            row.addWidget(edit, 3)
+            row.addWidget(combo, 1)
+            self.led_status_edits[state] = edit
+            self.led_status_color_combos[state] = combo
+            led_form.addRow(f"{state}显示:", row)
+        led_form.addRow('', QLabel('文字留空则该状态不显示；单色屏固定红色，双色屏可分别选红、黄、绿。'))
+        self._update_led_color_hint()
 
         led_test_layout = QVBoxLayout()
         self.led_connect_btn = QPushButton("测试连接")
@@ -418,7 +438,7 @@ class SettingsDialog(QDialog):
             field = row.fieldItem.widget()
             if field is None:
                 field = row.fieldItem.layout()
-            text = label.text() if label else ''
+            text = label.text() if isinstance(label, QLabel) else ''
             if text == '翻页间隔(秒):':
                 group_index = 1
             elif text == '标题区域:':
@@ -474,6 +494,8 @@ class SettingsDialog(QDialog):
         self.preview_status_label.setWordWrap(True)
         self.preview_status_label.setStyleSheet("color:#6b7280;")
         preview_layout.addWidget(self.preview_status_label)
+        self.preview_actual_font_label = QLabel('实际字号：生成预览后显示')
+        preview_layout.addWidget(self.preview_actual_font_label)
 
         preview_controls = QHBoxLayout()
         self.preview_generate_btn = QPushButton("生成预览")
@@ -530,6 +552,7 @@ class SettingsDialog(QDialog):
             self.led_club_rows_edit,
             self.led_club_groups_edit,
             self.led_title_edit,
+            self.led_grade_pages_edit,
         ):
             if isinstance(editor, QPlainTextEdit):
                 editor.textChanged.connect(self.mark_led_preview_stale)
@@ -539,12 +562,12 @@ class SettingsDialog(QDialog):
         self.led_color_mode_combo.currentIndexChanged.connect(
             self.mark_led_preview_stale
         )
-        for spin in (
-            self.led_title_font_size_spin,
-            self.led_header_font_size_spin,
-            self.led_cell_font_size_spin,
-        ):
-            spin.valueChanged.connect(self.mark_led_preview_stale)
+        for slider in (self.led_title_scale_slider, self.led_table_scale_slider):
+            slider.valueChanged.connect(self.mark_led_preview_stale)
+        for edit in self.led_status_edits.values():
+            edit.textChanged.connect(self.mark_led_preview_stale)
+        for combo in getattr(self, 'led_status_color_combos', {}).values():
+            combo.currentIndexChanged.connect(self.mark_led_preview_stale)
         self._update_preview_buttons()
         self._led_device_drafts = {}
         self.led_output_combo.currentIndexChanged.connect(self.change_output_type)
@@ -607,18 +630,29 @@ class SettingsDialog(QDialog):
         self._update_led_size_hint()
 
     def restore_auto_layout(self):
-        for spin in (self.led_title_font_size_spin, self.led_header_font_size_spin,
-                     self.led_cell_font_size_spin):
-            spin.setValue(0)
+        for slider in (self.led_title_scale_slider, self.led_table_scale_slider):
+            slider.setValue(100)
         self.mark_led_preview_stale()
 
-    def _make_font_size_spin(self, config_key):
-        spin = QSpinBox()
-        spin.setRange(0, 64)
-        spin.setSpecialValueText("自动")
-        spin.setValue(int(self.config.get(config_key, 0) or 0))
-        spin.setToolTip("自动：电脑展示随分辨率缩放；手动：固定 1-64 像素")
-        return spin
+    def _make_font_scale_slider(self, config_key):
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(50, 100)
+        slider.setSingleStep(5)
+        slider.setPageStep(10)
+        slider.setValue(int(self.config.get(config_key, 100)))
+        slider.setToolTip('相对于当前画面最大自适应字号的比例；生成预览后可查看实际像素')
+        return slider
+
+    def _font_scale_control(self, slider):
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        value = QLabel(f'{slider.value()}%')
+        value.setMinimumWidth(48)
+        slider.valueChanged.connect(lambda amount: value.setText(f'{amount}%'))
+        layout.addWidget(slider, 1)
+        layout.addWidget(value)
+        return row
 
     def save_settings(self):
         new_school_id = self.school_id_edit.text().strip()
@@ -693,6 +727,7 @@ class SettingsDialog(QDialog):
         self.config.set("led_layout_regions", led_values["regions_per_page"])
         self.config.set("led_grade_filter_mode", led_values["grade_filter_mode"])
         self.config.set("led_visible_grades", led_values["visible_grades"])
+        self.config.set("led_grade_pages", led_values["grade_pages"])
         self.config.set("led_club_rows_per_group", led_values["club_rows_per_group"])
         self.config.set("led_club_groups_per_page", led_values["club_groups_per_page"])
         self.config.set(
@@ -705,6 +740,10 @@ class SettingsDialog(QDialog):
         self.config.set("led_title_font_size", led_values["title_font_size"])
         self.config.set("led_header_font_size", led_values["header_font_size"])
         self.config.set("led_cell_font_size", led_values["cell_font_size"])
+        self.config.set("led_table_scale_percent", led_values["table_scale_percent"])
+        self.config.set("led_title_scale_percent", led_values["title_scale_percent"])
+        self.config.set("led_status_labels", led_values["status_labels"])
+        self.config.set("led_status_colors", led_values["status_colors"])
         self.config.set("led_screens", led_setup[0])
         self.config.set("led_display_plans", led_setup[1])
         self.config.set("led_enabled", any(screen["enabled"] for screen in led_setup[0]))
@@ -877,6 +916,24 @@ class SettingsDialog(QDialog):
         grade_filter_mode, visible_grades = self._current_led_grade_filter()
         if grade_filter_mode == "selected" and not visible_grades:
             return fail("指定 LED 显示年级时，至少选择一个年级")
+        grade_pages = []
+        for line in self.led_grade_pages_edit.toPlainText().splitlines():
+            if not line.strip():
+                continue
+            group = [part.strip() for part in line.replace(',', '、').replace('，', '、').split('、')]
+            if any(not part for part in group):
+                return fail("每页年级请用顿号分隔，不能有空项")
+            grade_pages.append(group)
+        if grade_pages:
+            all_pages_grades = [grade for group in grade_pages for grade in group]
+            known = set(self.led_grade_checks)
+            if any(grade not in known for grade in all_pages_grades):
+                return fail("轮播页面包含未知年级，请使用上方列表中的年级名称")
+            if len(set(all_pages_grades)) != len(all_pages_grades):
+                return fail("同一年级不能出现在多个轮播页面")
+            chosen = set(visible_grades if grade_filter_mode == 'selected' else known)
+            if set(all_pages_grades) != chosen:
+                return fail("自定义页面须包含全部显示年级，每个年级恰好出现一次")
         return {
             "ip": ip,
             "port": port,
@@ -891,25 +948,34 @@ class SettingsDialog(QDialog):
             "regions_per_page": regions_per_page,
             "grade_filter_mode": grade_filter_mode,
             "visible_grades": visible_grades,
+            "grade_pages": grade_pages,
             "club_rows_per_group": club_rows_per_group,
             "club_groups_per_page": club_groups_per_page,
             "dismissed_delay_seconds": dismissed_delay_seconds,
             "show_title": show_title,
             "title": title,
-            "title_font_size": self.led_title_font_size_spin.value(),
-            "header_font_size": self.led_header_font_size_spin.value(),
-            "cell_font_size": self.led_cell_font_size_spin.value(),
+            "title_font_size": 0,
+            "header_font_size": 0,
+            "cell_font_size": 0,
+            "title_scale_percent": self.led_title_scale_slider.value(),
+            "table_scale_percent": self.led_table_scale_slider.value(),
+            "status_labels": {state: edit.text() for state, edit in self.led_status_edits.items()},
+            "status_colors": {state: combo.currentData() for state, combo in self.led_status_color_combos.items()},
         }
 
     def _update_led_color_hint(self, *_args):
+        dual = self.led_color_mode_combo.currentData() == 'double'
+        for combo in getattr(self, 'led_status_color_combos', {}).values():
+            combo.setEnabled(dual)
+            combo.setToolTip('单色屏固定红色' if not dual else '为这个状态选择显示颜色')
         if self.led_color_mode_combo.currentData() == "double":
             self.led_color_hint.setText(
-                "双色状态：未放学=黄、放学中=红、已放学=绿；表格、标题和班级名保持红色。"
+                "双色状态的文字和颜色可在“样式”中分别设置；表格、标题和班级名保持红色。"
                 "必须与控制卡屏参中的双色配置一致。"
             )
         else:
             self.led_color_hint.setText(
-                "单色状态：未放学为空、刷卡后显示“放学中/已放学”。"
+                "单色状态文字可在“样式”中设置，颜色固定红色。"
                 "必须与控制卡屏参中的单色配置一致。"
             )
         self._update_led_size_hint()
@@ -977,6 +1043,7 @@ class SettingsDialog(QDialog):
 
         def run():
             try:
+                page_metrics = []
                 pages = self.led_service.render_preview_pages(
                     preview_dir,
                     width=request_values["width"],
@@ -996,11 +1063,18 @@ class SettingsDialog(QDialog):
                     visible_grades=request_values["visible_grades"],
                     title_position=request_values["title_position"],
                     pixel_scale=pixel_scale,
+                    grade_pages=request_values['grade_pages'],
+                    status_labels=request_values['status_labels'],
+                    status_colors=request_values['status_colors'],
+                    table_scale_percent=request_values['table_scale_percent'],
+                    title_scale_percent=request_values['title_scale_percent'],
+                    metrics=page_metrics,
                 )
                 payload = {
                     "revision": request_revision,
                     "ok": True,
                     "pages": pages,
+                    "metrics": page_metrics,
                     "values": request_values,
                     "error": "",
                 }
@@ -1062,6 +1136,7 @@ class SettingsDialog(QDialog):
         )
         self._preview_color_mode = values["color_mode"]
         self._preview_pages = payload["pages"]
+        self._preview_metrics = payload.get('metrics', [])
         try:
             self._preview_index = min(
                 self._preview_index,
@@ -1075,19 +1150,14 @@ class SettingsDialog(QDialog):
                 f"LED 年级 {grade_summary}；请先绑定学校并同步行政班或社团班数据。"
             )
         else:
-            color_summary = (
-                "双色模拟：未放学黄 / 放学中红 / 已放学绿"
-                if values["color_mode"] == "double"
-                else "单色模拟：黑底红字，未放学为空"
-            )
+            color_summary = '双色模拟' if values['color_mode'] == 'double' else '单色模拟'
             self.preview_status_label.setText(
                 f"{values['width']}×{values['height']} 像素 · "
                 f"行政班 {values['regions_per_page']} 区×{values['grades_per_page']} 行 · "
                 f"LED 年级 {grade_summary} · "
                 f"社团班 {values['club_groups_per_page']} 组×{values['club_rows_per_group']} 行 · "
-                f"字号 标题{values['title_font_size'] or '自动'} / "
-                f"行列{values['header_font_size'] or '自动'} / "
-                f"内容{values['cell_font_size'] or '自动'} · "
+                f"文字大小 标题{values['title_scale_percent']}% / "
+                f"表格{values['table_scale_percent']}% · "
                 f"{color_summary}"
             )
             self._show_preview_page()
@@ -1100,6 +1170,13 @@ class SettingsDialog(QDialog):
     def _show_preview_page(self):
         if not self._preview_pages:
             return
+        metric = (self._preview_metrics[self._preview_index]
+                  if self._preview_index < len(getattr(self, '_preview_metrics', [])) else {})
+        if metric:
+            self.preview_actual_font_label.setText(
+                f"本页实际字号：标题 {metric.get('title_px', 0)} px · "
+                f"行列 {metric.get('header_px', 0)} px · "
+                f"状态 {metric.get('cell_px', 0)} px")
         try:
             preview_image = colorize_led_preview(
                 self._preview_pages[self._preview_index],
@@ -1253,7 +1330,12 @@ class SettingsDialog(QDialog):
                 cell_font_size=values["cell_font_size"],
                 grade_filter_mode=values["grade_filter_mode"],
                 visible_grades=values["visible_grades"],
+                grade_pages=values['grade_pages'],
                 title_position=values["title_position"],
+                status_labels=values['status_labels'],
+                status_colors=values['status_colors'],
+                table_scale_percent=values['table_scale_percent'],
+                title_scale_percent=values['title_scale_percent'],
             )
         )
 

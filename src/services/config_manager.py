@@ -34,6 +34,7 @@ class ConfigManager:
         "led_layout_regions": 1,
         "led_grade_filter_mode": "all",
         "led_visible_grades": [],
+        "led_grade_pages": [],
         "led_club_rows_per_group": 4,
         "led_club_groups_per_page": 5,
         "led_dismissed_delay_seconds": 5,
@@ -42,6 +43,10 @@ class ConfigManager:
         "led_title_font_size": 0,
         "led_header_font_size": 0,
         "led_cell_font_size": 0,
+        "led_status_labels": None,
+        "led_status_colors": None,
+        "led_table_scale_percent": 100,
+        "led_title_scale_percent": 100,
     }
 
     def __new__(cls, config_path=None):
@@ -107,9 +112,11 @@ class ConfigManager:
 
 # Device settings are independent even when several screens share one plan.
 LED_DEVICE_KEYS = ('led_controller_ip', 'led_controller_port', 'led_width',
-                   'led_height', 'led_color_mode', 'led_output_type', 'led_monitor')
+                   'led_height', 'led_color_mode', 'led_output_type', 'led_monitor',
+                   'led_grade_filter_mode', 'led_visible_grades', 'led_grade_pages')
 LED_PLAN_KEYS = tuple(key for key in ConfigManager.DEFAULT_CONFIG
-                      if key.startswith('led_') and key not in LED_DEVICE_KEYS
+                      if key.startswith('led_') and
+                      (key not in LED_DEVICE_KEYS or key in ('led_grade_filter_mode', 'led_visible_grades'))
                       and key not in ('led_enabled', 'led_dismissed_delay_seconds'))
 
 
@@ -154,6 +161,18 @@ def validate_led_setup(screens, plans):
         for key in ('led_title_font_size', 'led_header_font_size', 'led_cell_font_size'):
             if not 0 <= int(values[key]) <= 64:
                 raise ValueError('字号必须为自动或 1-64 像素')
+        for key in ('led_table_scale_percent', 'led_title_scale_percent'):
+            if not 50 <= int(values[key]) <= 100:
+                raise ValueError('文字大小调节必须在 50%-100% 之间')
+        labels = values['led_status_labels']
+        colors = values['led_status_colors']
+        states = {'未放学', '放学中', '已放学'}
+        if labels is not None and (not isinstance(labels, dict) or set(labels) != states
+                                   or any(not isinstance(value, str) or '\n' in value for value in labels.values())):
+            raise ValueError('状态显示内容必须分别设置三种单行文字')
+        if colors is not None and (not isinstance(colors, dict) or set(colors) != states
+                                   or any(value not in ('red', 'yellow', 'green') for value in colors.values())):
+            raise ValueError('状态颜色仅支持红、黄、绿')
         if values['led_show_title'] and not str(values['led_school_title']).strip():
             raise ValueError('显示标题时，标题不能为空')
     for screen in screens:
@@ -166,7 +185,24 @@ def validate_led_setup(screens, plans):
             raise ValueError('请填写屏幕名称')
         if screen.get('plan_id') not in plan_ids:
             raise ValueError(f'{name}：请选择有效的显示方案')
-        values = {**ConfigManager.DEFAULT_CONFIG, **screen.get('settings', {})}
+        plan = next(plan for plan in plans if plan['id'] == screen['plan_id'])
+        values = {**ConfigManager.DEFAULT_CONFIG, **plan.get('settings', {}),
+                  **screen.get('settings', {})}
+        if values['led_grade_filter_mode'] == 'selected' and not values['led_visible_grades']:
+            raise ValueError(f'{name}：至少选择一个显示年级')
+        grade_pages = values['led_grade_pages']
+        if not isinstance(grade_pages, list) or any(
+            not isinstance(page, list) or not page or
+            any(not isinstance(grade, str) or not grade.strip() for grade in page)
+            for page in grade_pages
+        ):
+            raise ValueError(f'{name}：每页年级必须是非空的年级列表')
+        if grade_pages:
+            flattened = [grade for page in grade_pages for grade in page]
+            if len(flattened) != len(set(flattened)):
+                raise ValueError(f'{name}：同一年级不能重复出现在多个页面')
+            if values['led_grade_filter_mode'] == 'selected' and set(flattened) != set(values['led_visible_grades']):
+                raise ValueError(f'{name}：自定义页面须包含全部已选择的年级')
         if values['led_output_type'] not in ('led', 'desktop'):
             raise ValueError(f'{name}：屏幕输出类型无效')
         if values['led_output_type'] == 'desktop':
