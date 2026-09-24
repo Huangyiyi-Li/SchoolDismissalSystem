@@ -17,9 +17,13 @@ import java.util.concurrent.Executors;
 public final class MainActivity extends Activity {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final OnbonLedClient led = new OnbonLedClient();
+    private final SerialCardProbe cardProbe = new SerialCardProbe();
     private EditText ipInput;
     private EditText portInput;
     private TextView result;
+    private TextView cardResult;
+    private Button cardButton;
+    private boolean cardListening;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -36,8 +40,14 @@ public final class MainActivity extends Activity {
         title.setTextSize(22);
         content.addView(title);
         TextView hint = new TextView(this);
-        hint.setText("仅验证 BX-6E1XP 控制卡。发送测试文字会暂时覆盖 LED 当前画面，请在现场人员知情时操作。");
+        hint.setText("先验证设备内置刷卡器。LED 控制卡连接后再测试屏幕；发送测试文字会暂时覆盖 LED 当前画面。");
         content.addView(hint);
+
+        cardButton = addButton(content, "开始刷卡测试", view -> toggleCardProbe());
+        cardResult = new TextView(this);
+        cardResult.setTextSize(18);
+        cardResult.setText("刷卡测试尚未开始。只显示卡号，不会查询用户、推送消息或触发放学播报。");
+        content.addView(cardResult);
 
         ipInput = new EditText(this);
         ipInput.setSingleLine(true);
@@ -61,16 +71,41 @@ public final class MainActivity extends Activity {
 
         result = new TextView(this);
         result.setTextSize(16);
-        result.setText("等待手动测试。串口刷卡将在取得现有项目的读卡类后接入。");
+        result.setText("LED 测试尚未开始。");
         content.addView(result);
         setContentView(scroll);
     }
 
-    private void addButton(LinearLayout parent, String label, View.OnClickListener listener) {
+    private Button addButton(LinearLayout parent, String label, View.OnClickListener listener) {
         Button button = new Button(this);
         button.setText(label);
         button.setOnClickListener(listener);
         parent.addView(button);
+        return button;
+    }
+
+    private void toggleCardProbe() {
+        if (cardListening) {
+            cardProbe.stop();
+            cardListening = false;
+            cardButton.setText("开始刷卡测试");
+            cardResult.setText("刷卡测试已停止。");
+            return;
+        }
+        cardListening = true;
+        cardButton.setText("停止刷卡测试");
+        cardResult.setText("正在打开 /dev/ttyS1…");
+        cardProbe.start(new SerialCardProbe.Listener() {
+            @Override
+            public void onStatus(String message) {
+                runOnUiThread(() -> cardResult.setText(message));
+            }
+
+            @Override
+            public void onBytes(byte[] bytes) {
+                runOnUiThread(() -> cardResult.setText(SerialCardProbe.describe(bytes)));
+            }
+        });
     }
 
     private void confirm(String message, Runnable action) {
@@ -111,7 +146,21 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        // The original terminal also reads /dev/ttyS1. Release it as soon as
+        // this diagnostic screen is no longer visible.
+        if (cardListening) {
+            cardProbe.stop();
+            cardListening = false;
+            cardButton.setText("开始刷卡测试");
+            cardResult.setText("刷卡测试已停止。返回本页后可再次开始。");
+        }
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
+        cardProbe.stop();
         io.shutdownNow();
         super.onDestroy();
     }
