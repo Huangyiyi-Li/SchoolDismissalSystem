@@ -7,13 +7,20 @@ Open http://127.0.0.1:8766/admin on the Mac to edit the test settings.
 
 import argparse
 import json
+import os
 import threading
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
 
 STATE_FILE = Path(__file__).resolve().parent.parent / ".local" / "android_mock_config.json"
+DIAGNOSTIC_FILE = STATE_FILE.with_name("android_led_diagnostic.json")
+TOKEN_FILE = STATE_FILE.with_name("android_device_report_token")
+APK_TOKEN_FILE = STATE_FILE.with_name("android_apk_download_token")
+APK_FILE = Path(__file__).resolve().parent.parent / "android-poc/app/build/outputs/apk/debug/app-debug.apk"
+PUBLIC_URL = os.environ.get("ANDROID_MOCK_PUBLIC_URL", "").rstrip("/")
 CONFIG_LOCK = threading.Lock()
 DEFAULT = {
     "version": 1,
@@ -127,6 +134,8 @@ button{font-size:17px;padding:10px 20px}small{color:#576477}</style><main>
 <label>切页秒数 <input id="pageSeconds" type="number"></label>
 <label>字号 <input id="textSize" type="number"></label></fieldset>
 <button onclick="save()">保存并下发</button><p id="status"></p>
+<fieldset><legend>LED 诊断</legend><p id="diagnostic">等待话机回传…</p>
+<p id="download"></p></fieldset>
 <small>本页仅是 Mac 测试平台；正式服务端接口需按相同字段实现。</small></main>
 <script>
 const id=x=>document.getElementById(x), v=x=>id(x).value, n=x=>Number(v(x));
@@ -145,7 +154,13 @@ width:n('width'),height:n('height'),schoolTitle:v('schoolTitle'),
 gradesPerPage:n('gradesPerPage'),pageSeconds:n('pageSeconds'),textSize:n('textSize')}};
 let r=await fetch('/api/device-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
 let x=await r.json();id('status').textContent=r.ok?'已保存，设备下次拉取时生效（版本 '+x.data.version+'）':'保存失败：'+x.message;}
-load();</script></html>"""
+async function loadDiagnostic(){try{let r=await fetch('/api/led-diagnostic');let x=await r.json();
+let d=x.data;id('diagnostic').textContent=d?(d.receivedAt+' · '+(d.success?'成功':'失败')+' · '+d.stage+' · '+d.message+' · 安卓 '+d.appVersion):'尚未收到新版话机的诊断结果';
+}catch(e){id('diagnostic').textContent='诊断读取失败：'+e.message;}}
+async function loadDownload(){let r=await fetch('/api/debug-apk-link');let x=await r.json();
+if(x.data&&x.data.url){let a=document.createElement('a');a.href=x.data.url;a.textContent='在话机浏览器打开，下载并安装最新版 APK';
+id('download').append(a);let p=document.createElement('p');p.textContent=x.data.url;id('download').append(p);}}
+load();loadDiagnostic();loadDownload();setInterval(loadDiagnostic,5000);</script></html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -162,22 +177,70 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/device-config":
             self._json(200, {"code": 200, "data": read_config()})
+        elif path == "/api/debug-apk/" + download_token() and APK_FILE.is_file():
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.android.package-archive")
+            self.send_header("Content-Disposition", 'attachment; filename="dismissal-debug.apk"')
+            self.send_header("Content-Length", str(APK_FILE.stat().st_size))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            with APK_FILE.open("rb") as apk:
+                while chunk := apk.read(65536):
+                    self.wfile.write(chunk)
         else:
             self._json(404, {"code": 404, "message": "Not found"})
 
     def do_POST(self):
-        self._json(405, {"code": 405, "message": "Read only"})
+        if urlparse(self.path).path != "/api/led-diagnostic":
+            self._json(405, {"code": 405, "message": "Read only"})
+            return
+        if self.headers.get("X-Device-Token", "") != report_token():
+            self._json(403, {"code": 403, "message": "Forbidden"})
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 1 <= size <= 2048:
+                raise ValueError("诊断数据大小无效")
+            data = json.loads(self.rfile.read(size))
+            if not isinstance(data, dict) or not isinstance(data.get("success"), bool):
+                raise ValueError("诊断数据格式错误")
+            for key in ("stage", "message", "appVersion", "controller"):
+                if not isinstance(data.get(key), str) or len(data[key]) > 500:
+                    raise ValueError("诊断字段无效")
+            if not isinstance(data.get("configVersion"), int):
+                raise ValueError("配置版本无效")
+            data["receivedAt"] = datetime.now().astimezone().isoformat(timespec="seconds")
+            with CONFIG_LOCK:
+                DIAGNOSTIC_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            self._json(200, {"code": 200})
+        except (ValueError, TypeError, json.JSONDecodeError) as error:
+            self._json(400, {"code": 400, "message": str(error)})
+
+
+def report_token():
+    return TOKEN_FILE.read_text(encoding="utf-8").strip()
+
+
+def download_token():
+    return APK_TOKEN_FILE.read_text(encoding="utf-8").strip()
 
 
 class AdminHandler(Handler):
     def do_GET(self):
-        if urlparse(self.path).path == "/admin":
+        path = urlparse(self.path).path
+        if path == "/admin":
             body = admin_html().encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif path == "/api/led-diagnostic":
+            data = json.loads(DIAGNOSTIC_FILE.read_text(encoding="utf-8")) if DIAGNOSTIC_FILE.exists() else None
+            self._json(200, {"code": 200, "data": data})
+        elif path == "/api/debug-apk-link":
+            url = PUBLIC_URL + "/api/debug-apk/" + download_token() if PUBLIC_URL and APK_FILE.is_file() else ""
+            self._json(200, {"code": 200, "data": {"url": url}})
         else:
             super().do_GET()
 

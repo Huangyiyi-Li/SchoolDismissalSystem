@@ -16,8 +16,14 @@ Mac 测试平台的设置页在 Mac 本机 `http://127.0.0.1:8766/admin`。安�
 
 1. 在仓库根目录运行 `python3 tools/android_mock_platform.py`。设备只读接口监听 Mac 本机 8765，编辑页监听 8766。公开地址只代理 8765，所以外网无法打开编辑页或修改配置。
 2. 如果话机与 Mac 不在同一个局域网，运行 `/opt/homebrew/opt/cloudflared/bin/cloudflared tunnel --url http://127.0.0.1:8765 --no-autoupdate`，取得临时 HTTPS 地址。临时地址在隧道重启后会变化，仅用于联调。
-3. 构建时将地址作为 `TEST_PLATFORM_URL` 环境变量，例如 `TEST_PLATFORM_URL='https://临时地址.trycloudflare.com' JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ANDROID_HOME=/Users/szjxxiangmubu/Andriod ./gradlew :app:assembleDebug --offline --no-daemon`。构建前需运行 `bash setup-vendor-sdk.sh` 复制本机已有的仰邦 Android SDK。
+3. 构建时将地址作为 `TEST_PLATFORM_URL` 环境变量，并把 `.local/android_device_report_token` 的内容作为 `DEVICE_REPORT_TOKEN` 环境变量传入；还需设置 `JAVA_HOME`、`ANDROID_HOME`，运行 `./gradlew :app:assembleDebug --offline --no-daemon`。构建前需运行 `bash setup-vendor-sdk.sh` 复制本机已有的仰邦 Android SDK。
 4. 安装 `app/build/outputs/apk/debug/app-debug.apk`，保持话机联网并打开“放学系统安卓联调”。屏幕应显示配置版本、38 个班级、72 张班级卡以及 2 组放学时间（学校 40125 在 2026-09-24 的接口数据）。
+
+## 远程安装与 LED 诊断
+
+测试平台运行时设置 `ANDROID_MOCK_PUBLIC_URL` 为当前临时 HTTPS 地址。Mac 管理页 `http://127.0.0.1:8766/admin` 会显示新版 APK 的下载链接和话机最近一次 LED 诊断。话机可用浏览器打开该链接安装 APK；Android 安装确认仍需在话机上操作。更新 APK 后，连接检测和每次 LED 画面发送会把 SDK 返回结果经 8765 接口回传，管理页约 5 秒刷新一次。诊断只包含发送阶段、结果、应用版本、配置版本和控制卡地址，不包含刷卡号或学生数据。
+
+诊断接口只接受 `.local/android_device_report_token` 对应的设备令牌。APK 下载链接使用单独的 `.local/android_apk_download_token`；两者均为本地联调凭据，不要加入版本库。临时 HTTPS 隧道重启后须更新平台公开地址并重新构建 APK。屏幕显示“已连接”只证明连接检测成功；实际画面发送还要根据返回错误和实体屏观察判断。
 
 Android APK 使用安卓标准 `TextToSpeech`。GT-10M 原系统没有中文 TTS 引擎；本次设备已另装 Sherpa-ONNX 中文离线引擎，并设为默认。后续交付需确定引擎安装、授权和升级方式。音频是否真正由功放和音柱播放，仍需现场听测。
 

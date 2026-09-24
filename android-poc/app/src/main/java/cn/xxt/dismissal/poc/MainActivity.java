@@ -361,6 +361,7 @@ public final class MainActivity extends Activity {
             catch (Exception error) { result = "控制卡连接失败：" + error.getMessage(); }
             String message = result;
             runOnUiThread(() -> ledStatus.setText(message));
+            configClient.reportLed(result.startsWith("已连接"), "连接检测", result, current);
         });
     }
 
@@ -373,8 +374,10 @@ public final class MainActivity extends Activity {
                 String message = led.sendBoardPage(current.ledIp, current.ledPort,
                         image, getCacheDir());
                 runOnUiThread(() -> ledStatus.setText(message));
+                configClient.reportLed(true, "发送班级画面", message, current);
             } catch (Exception error) {
                 runOnUiThread(() -> ledStatus.setText("LED 发送失败：" + error.getMessage()));
+                configClient.reportLed(false, "发送班级画面", String.valueOf(error.getMessage()), current);
             } finally { image.recycle(); }
         });
     }

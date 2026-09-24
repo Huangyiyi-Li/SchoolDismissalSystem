@@ -100,7 +100,9 @@ final class OnbonLedClient {
 
     private static void requireOk(Bx6GScreen.Result<?> result, String error) {
         if (result == null || !result.isOK()) {
-            throw new IllegalStateException(error + "（控制卡未确认成功）");
+            String detail = result == null ? "SDK 未返回结果"
+                    : String.valueOf(result.getError()) + "，" + result;
+            throw new IllegalStateException(error + "：" + detail);
         }
     }
 }
