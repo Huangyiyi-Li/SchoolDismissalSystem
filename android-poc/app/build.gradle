@@ -5,6 +5,7 @@ plugins {
 android {
     namespace 'cn.xxt.dismissal.poc'
     compileSdk 35
+    buildToolsVersion '36.0.0'
 
     defaultConfig {
         applicationId 'cn.xxt.dismissal.poc'
