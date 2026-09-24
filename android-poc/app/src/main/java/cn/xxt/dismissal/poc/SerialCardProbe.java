@@ -90,10 +90,17 @@ final class SerialCardProbe {
         if (bytes.length != 4) {
             return "收到 " + bytes.length + " 字节：" + hex + "\n需核对读卡数据格式，暂不当作卡号";
         }
+        return "卡号：" + cardNumber(bytes) + "\n原始数据：" + hex;
+    }
+
+    static String cardNumber(byte[] bytes) {
+        if (bytes.length != 4) {
+            throw new IllegalArgumentException("卡号必须恰好为四字节");
+        }
         long card = 0;
         for (int i = 3; i >= 0; i--) {
             card = (card << 8) | (bytes[i] & 0xff);
         }
-        return "卡号：" + card + "\n原始数据：" + hex;
+        return Long.toString(card);
     }
 }

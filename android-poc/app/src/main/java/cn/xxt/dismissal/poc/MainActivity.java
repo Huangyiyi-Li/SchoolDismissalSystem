@@ -18,6 +18,10 @@ public final class MainActivity extends Activity {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final OnbonLedClient led = new OnbonLedClient();
     private final SerialCardProbe cardProbe = new SerialCardProbe();
+    private ClassCatalog catalog;
+    private EditText schoolIdInput;
+    private TextView syncResult;
+    private String lastCardId;
     private EditText ipInput;
     private EditText portInput;
     private TextView result;
@@ -28,6 +32,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        catalog = new ClassCatalog(this);
         ScrollView scroll = new ScrollView(this);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -48,6 +53,18 @@ public final class MainActivity extends Activity {
         cardResult.setTextSize(18);
         cardResult.setText("刷卡测试尚未开始。只显示卡号，不会查询用户、推送消息或触发放学播报。");
         content.addView(cardResult);
+
+        schoolIdInput = new EditText(this);
+        schoolIdInput.setSingleLine(true);
+        schoolIdInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        schoolIdInput.setHint("学校编号");
+        String savedSchoolId = catalog.schoolId();
+        schoolIdInput.setText(savedSchoolId.isEmpty() ? "40125" : savedSchoolId);
+        content.addView(schoolIdInput);
+        addButton(content, "同步班级卡（只读取）", view -> syncClassCatalog());
+        syncResult = new TextView(this);
+        syncResult.setText("本地已有 " + catalog.cardCount() + " 张班级卡。同步只读取班级数据，不会通知家长。");
+        content.addView(syncResult);
 
         ipInput = new EditText(this);
         ipInput.setSingleLine(true);
@@ -103,8 +120,42 @@ public final class MainActivity extends Activity {
 
             @Override
             public void onBytes(byte[] bytes) {
-                runOnUiThread(() -> cardResult.setText(SerialCardProbe.describe(bytes)));
+                runOnUiThread(() -> {
+                    String message = SerialCardProbe.describe(bytes);
+                    if (bytes.length == 4) {
+                        lastCardId = SerialCardProbe.cardNumber(bytes);
+                        String className = catalog.classForCard(lastCardId);
+                        message += className == null
+                                ? "\n当前同步数据未找到对应班级"
+                                : "\n对应班级：" + className;
+                    }
+                    cardResult.setText(message);
+                });
             }
+        });
+    }
+
+    private void syncClassCatalog() {
+        String schoolId = schoolIdInput.getText().toString().trim();
+        syncResult.setText("正在读取学校 " + schoolId + " 的班级卡…");
+        io.execute(() -> {
+            String message;
+            try {
+                int count = catalog.sync(schoolId);
+                message = "同步成功：学校 " + schoolId + " 有 " + count + " 张班级卡";
+            } catch (Exception error) {
+                message = "同步失败：" + error.getMessage();
+            }
+            String finalMessage = message;
+            runOnUiThread(() -> {
+                syncResult.setText(finalMessage);
+                if (lastCardId != null) {
+                    String className = catalog.classForCard(lastCardId);
+                    if (className != null) {
+                        cardResult.setText("上次卡号：" + lastCardId + "\n对应班级：" + className);
+                    }
+                }
+            });
         });
     }
 
