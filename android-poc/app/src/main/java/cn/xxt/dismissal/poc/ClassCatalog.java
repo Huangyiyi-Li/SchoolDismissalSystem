@@ -19,6 +19,7 @@ final class ClassCatalog {
     private static final String PREFS = "class_catalog";
     private static final String KEY_SCHOOL = "school_id";
     private static final String KEY_CARDS = "cards";
+    private static final String KEY_CLASSES = "classes";
     private final SharedPreferences prefs;
 
     ClassCatalog(Context context) {
@@ -34,6 +35,14 @@ final class ClassCatalog {
             return new JSONObject(prefs.getString(KEY_CARDS, "{}")).length();
         } catch (Exception ignored) {
             return 0;
+        }
+    }
+
+    JSONArray classes() {
+        try {
+            return new JSONArray(prefs.getString(KEY_CLASSES, "[]"));
+        } catch (Exception ignored) {
+            return new JSONArray();
         }
     }
 
@@ -72,12 +81,22 @@ final class ClassCatalog {
             }
 
             JSONObject cards = new JSONObject();
+            JSONArray classes = new JSONArray();
             for (int i = 0; i < rows.length(); i++) {
                 JSONObject row = rows.optJSONObject(i);
                 if (row == null) continue;
                 String name = usableName(row, "classVoiceName");
                 if (name.isEmpty()) name = usableName(row, "className");
                 if (name.isEmpty()) continue;
+                String displayName = usableName(row, "classShowName");
+                if (displayName.isEmpty()) displayName = usableName(row, "className");
+                if (displayName.isEmpty()) displayName = name;
+                classes.put(new JSONObject()
+                        .put("classId", row.optString("classId"))
+                        .put("name", name)
+                        .put("displayName", displayName)
+                        .put("gradeName", usableName(row, "gradeName"))
+                        .put("type", row.optInt("classType", 1)));
                 Object rawCards = row.opt("cardId");
                 if (rawCards == null || rawCards == JSONObject.NULL) continue;
                 if (rawCards instanceof JSONArray) {
@@ -95,7 +114,8 @@ final class ClassCatalog {
                 throw new IllegalStateException("未取得可用的班级卡号，原有本地数据已保留");
             }
             if (!prefs.edit().putString(KEY_SCHOOL, cleanSchoolId)
-                    .putString(KEY_CARDS, cards.toString()).commit()) {
+                    .putString(KEY_CARDS, cards.toString())
+                    .putString(KEY_CLASSES, classes.toString()).commit()) {
                 throw new IllegalStateException("班级数据保存失败");
             }
             return cards.length();
@@ -114,6 +134,33 @@ final class ClassCatalog {
             return (type == 2 ? "社团班：" : "行政班：") + name;
         } catch (Exception ignored) {
             return null;
+        }
+    }
+
+    String classIdForCard(String cardId) {
+        try {
+            return new JSONObject(prefs.getString(KEY_CARDS, "{}"))
+                    .optJSONObject(cardId).optString("classId", "");
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    String voiceNameForCard(String cardId) {
+        try {
+            return new JSONObject(prefs.getString(KEY_CARDS, "{}"))
+                    .optJSONObject(cardId).optString("name", "");
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    int classTypeForCard(String cardId) {
+        try {
+            return new JSONObject(prefs.getString(KEY_CARDS, "{}"))
+                    .optJSONObject(cardId).optInt("type", 1);
+        } catch (Exception ignored) {
+            return 1;
         }
     }
 

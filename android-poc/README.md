@@ -1,27 +1,39 @@
-# 安卓 9 硬件联调版
+# 放学模块安卓联调版
 
-这是独立于现有 Windows 客户端的最小验证工程。它可手动读取 GT-10M 设备 `/dev/ttyS1` 的原始刷卡数据和小端十进制卡号，并手动从 `get-classes-v2` 只读同步班级卡、显示卡片对应班级；另可用仰邦 Android Ethernet SDK 对 BX-6E1XP 做手动连接、动态区测试文字和清除。**当前不包含放学语音、通知推送或正式放学业务，不是可交付的放学客户端。**
+这是在 GT-10M 安卓 9 话机上验证放学链路的独立调试 APK。它尚未嵌入原有 `cn.xxt.terminal` 话机应用，不能替代电话、请假、留言功能。
 
-## 当前证据
+## 数据和配置从哪里来
 
-- 本机开发包位于 `~/Downloads/BX_05_06_SDK_20241105/JAVA/Android/Android_Ethernet/bx.dual.android`。其示例项目 `minSdkVersion 21`，包含 `Bx6E`、`DynamicBxAreaRule`、`ImageFileBxPage`；安卓 9 是 API 28。
-- Windows 客户端用 `Bx6E`、动态区 0、控制卡默认端口 5005。这里按相同控制卡系列编写，但安卓 SDK 版本不同，真实控制卡行为仍需现场核对。
-- `device_qingju` 分支提供了 `SerialPortManage`：从 `/dev/ttyS1` 以 9600 波特率读取，将收到的字节按小端序转十进制。本联调版只把恰好四字节的一次读取显示为候选卡号，其他长度仅显示原始字节，等待实机核对协议。
-- 2026-09-24 已通过 Wi-Fi ADB 连接 GT-10M（安卓 9，`arm64-v8a`）。设备上存在 `/dev/ttyS1`；联调版成功读取四字节刷卡数据，用户确认小端十进制卡号与系统入库一致。学校 40125 的 `get-classes-v2` 接口返回 38 个班级，安卓端 0.3.1 同步得到 72 张班级卡，并在实机上把测试卡显示为“行政班：5.2班”；用户确认测试无误。0.3.0 曾将空播报名称显示为 `null`，0.3.1 已修复并复测。
-- 2026-09-24 语音预研：GT-10M 的系统 `tts_default_synth` 未设置，已安装包中未发现语音引擎；Android `TextToSpeech` 实机初始化失败。原终端项目的 `TTSHelper` 也依赖该系统接口。语音方案需另行适配并实机试听，已恢复设备上通过验证的 0.3.1 联调版。
+| 内容 | 来源 | 安卓端用途 |
+| --- | --- | --- |
+| 班级与绑卡 | 现有 `get-classes-v2` 接口 | 刷卡后查找班级、形成固定播报文本 |
+| 放学时间 | 现有 `get-school-dismissal-schedule-v2` 接口 | 非测试模式下决定能否播报 |
+| 模块开关、语速、音量、遍数、LED 控制卡及样式 | Mac 测试平台 `/api/device-config` | 每 30 秒拉取并自动应用 |
 
-## 在 Android Studio 中打开
+Mac 测试平台的设置页在 Mac 本机 `http://127.0.0.1:8766/admin`。安卓端没有学校、语音和 LED 的本地设置入口。配置缓存只用于平台短时不可达时继续显示已下发的内容；服务端仍是唯一编辑处。
 
-1. 安装 Android Studio，并在 SDK Manager 中安装 Android SDK Platform 35。工程最低系统版本是 Android 9（API 28）。本机 SDK 目录为 `~/Andriod`。
-2. 在本目录运行 `bash setup-vendor-sdk.sh`，从本机已有的仰邦示例复制依赖。依赖文件被 Git 忽略，不会提交到仓库。
-3. 用 Android Studio 打开本目录，等待 Gradle 同步后运行到目标安卓机。`gradlew` 使用 Gradle 8.9，Android Gradle Plugin 为 8.7.3，需要 JDK 17。
-4. 执行 `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradlew assembleDebug` 后，APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。这是仅供联调的 debug 包。
-5. 在安卓机输入现场控制卡 IP 和端口，先点“测试连接”。确认现场允许更改画面后，再测试发送与清除；核对原节目是否恢复。
+## 启动 Mac 测试平台
 
-## 待实机验证和后续接入
+1. 在仓库根目录运行 `python3 tools/android_mock_platform.py`。设备只读接口监听 Mac 本机 8765，编辑页监听 8766。公开地址只代理 8765，所以外网无法打开编辑页或修改配置。
+2. 如果话机与 Mac 不在同一个局域网，运行 `/opt/homebrew/opt/cloudflared/bin/cloudflared tunnel --url http://127.0.0.1:8765 --no-autoupdate`，取得临时 HTTPS 地址。临时地址在隧道重启后会变化，仅用于联调。
+3. 构建时将地址作为 `TEST_PLATFORM_URL` 环境变量，例如 `TEST_PLATFORM_URL='https://临时地址.trycloudflare.com' JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ANDROID_HOME=/Users/szjxxiangmubu/Andriod ./gradlew :app:assembleDebug --offline --no-daemon`。构建前需运行 `bash setup-vendor-sdk.sh` 复制本机已有的仰邦 Android SDK。
+4. 安装 `app/build/outputs/apk/debug/app-debug.apk`，保持话机联网并打开“放学系统安卓联调”。屏幕应显示配置版本、38 个班级、72 张班级卡以及 2 组放学时间（学校 40125 在 2026-09-24 的接口数据）。
 
-1. 安装联调版后，打开“放学系统安卓联调”，确认学校编号，点击“同步班级卡（只读取）”，等待成功提示。然后点击“开始刷卡测试”，贴近刷一张测试卡，核对显示的班级。若显示非四字节，则先确认读卡帧格式。现有终端 App 也会读取该串口，刷卡测试时请勿同时让两个 App 监听。
-2. Android SDK 与 BX-6E1XP 实机是否能连接、发送、清除动态区，单色和双色屏是否正常，是否恢复原节目。
-3. 上述两项通过后，接入完整读卡监听、数据同步、放学时段、语音播报和图片分页渲染。
+Android APK 使用安卓标准 `TextToSpeech`。GT-10M 原系统没有中文 TTS 引擎；本次设备已另装 Sherpa-ONNX 中文离线引擎，并设为默认。后续交付需确定引擎安装、授权和升级方式。音频是否真正由功放和音柱播放，仍需现场听测。
 
-2026-09-24 已在本机使用 JDK 17、Android Platform 35、Build Tools 36 和仰邦 Android SDK 构建成功；APK 的 ZIP 完整性、最低 API 28 和 v2 签名已核对。目标安卓机和 LED 仍未进行实机测试。
+## 刷卡和播报规则
+
+串口为 `/dev/ttyS1`、9600 波特。读卡线程按**字节流**累积，只有凑齐 4 字节才按小端序生成卡号；3＋1 字节分两次到达时会合并。若 700 毫秒内仍未补齐，屏幕提示不完整并在 debug logcat 记录原始读取。这个组帧假设来自先前成功读到的 4 字节卡，还需要用多张卡反复实测；若设备实际存在其他帧格式，应按原始数据调整。
+
+卡号查到班级且处于放学时段时，固定播报“班级名＋正在放学”。例如 `3.2班` 转成“三年级二班正在放学”。语速、单次播报音量、遍数和遍数间隔来自 Mac 配置。测试模式跳过时段限制；正式模式使用现有放学时间接口。本版不会调用家长通知接口。
+
+若安卓音频模式显示正在通话，播报进入内存队列，通话结束后继续。请假、留言与通话的完整优先级和 UI 冲突提示需要在原话机应用中接入统一读卡和音频调度，独立调试 APK 无法验证这部分。
+
+## LED
+
+只有 Mac 配置启用 LED 并下发控制卡 IP、端口和尺寸后，安卓端才尝试连接和发送画面。班级画面与预览使用同一渲染器，动态区 0 由仰邦 Android Ethernet SDK 发送。连接的 BX-6E1XP 控制卡尚未到场；构建和预览不能证明实体 LED 已正确显示。
+
+## 已验证与待验证
+
+- 已验证：Mac 本机编辑接口可更新版本；临时 HTTPS 地址可只读获取配置，公开地址无法修改；安卓设备读到配置 v1、现有接口同步 38 个班级、72 张卡和 2 组时间；Mac 更新到 v2 后设备能拉取 v2；中文语音引擎初始化成功。
+- 待现场验证：同一张及多张卡连续刷 3～5 次时的完整帧、班级识别、准确播报文本、语速/音量/遍数、功放音柱实际发声；控制卡连接和实际 LED 画面；原话机应用内的电话、请假、留言冲突处理。

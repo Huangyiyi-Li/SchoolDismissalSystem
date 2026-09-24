@@ -4,6 +4,7 @@
     <application
         android:name=".ProbeApplication"
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:label="放学系统安卓联调"
         tools:replace="android:allowBackup,android:label">
         <activity android:name=".MainActivity" android:exported="true">

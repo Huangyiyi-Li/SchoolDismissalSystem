@@ -42,6 +42,7 @@ final class SerialCardProbe {
     }
 
     private void readLoop(Listener listener) {
+        CardFrameAssembler frames = new CardFrameAssembler();
         try {
             // Match device_qingju's serial settings. A failed stty is reported but
             // does not prevent reading if the device already has the right settings.
@@ -61,12 +62,30 @@ final class SerialCardProbe {
             byte[] buffer = new byte[100];
             while (running) {
                 if (stream.available() == 0) {
+                    int incomplete = frames.expire(android.os.SystemClock.elapsedRealtime());
+                    if (incomplete > 0) {
+                        listener.onStatus("本次只收到 " + incomplete
+                                + "/4 字节，超时未补齐；请再刷一次并记录现象");
+                    }
                     Thread.sleep(100);
                     continue;
                 }
                 int count = stream.read(buffer);
                 if (count > 0) {
-                    listener.onBytes(Arrays.copyOf(buffer, count));
+                    byte[] chunk = Arrays.copyOf(buffer, count);
+                    if (BuildConfig.DEBUG) {
+                        android.util.Log.d("DismissalCardFrame", "read=" + count
+                                + " at=" + android.os.SystemClock.elapsedRealtime()
+                                + " raw=" + describe(chunk).replace('\n', ' '));
+                    }
+                    java.util.List<byte[]> complete = frames.accept(chunk,
+                            android.os.SystemClock.elapsedRealtime());
+                    if (frames.pendingSize() > 0) {
+                        listener.onStatus("收到 " + count + " 字节，本张卡已累计 "
+                                + frames.pendingSize() + "/4 字节，等待补齐");
+                    }
+                    for (byte[] card : complete) listener.onBytes(card);
+                    if (!complete.isEmpty()) listener.onStatus("读卡器已打开；本次卡号已按 4 字节组帧");
                 }
             }
         } catch (InterruptedException ignored) {

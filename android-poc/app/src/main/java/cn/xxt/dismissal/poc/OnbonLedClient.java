@@ -1,9 +1,15 @@
 package cn.xxt.dismissal.poc;
 
+import android.graphics.Bitmap;
+
+import java.io.File;
+import java.io.FileOutputStream;
+
 import onbon.bx06.Bx6GScreen;
 import onbon.bx06.Bx6GScreenClient;
 import onbon.bx06.area.DynamicBxArea;
 import onbon.bx06.area.page.TextBxPage;
+import onbon.bx06.area.page.ImageFileBxPage;
 import onbon.bx06.cmd.dyn.DynamicBxAreaRule;
 import onbon.bx06.series.Bx6E;
 
@@ -48,6 +54,37 @@ final class OnbonLedClient {
             return "测试文字已发送到 LED；完成后请点击清除测试画面";
         } finally {
             screen.disconnect();
+        }
+    }
+
+    String sendBoardPage(String ip, int port, Bitmap page, File cacheDir) throws Exception {
+        File image = File.createTempFile("led-page-", ".png", cacheDir);
+        try {
+            try (FileOutputStream output = new FileOutputStream(image)) {
+                if (!page.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                    throw new IllegalStateException("LED 画面编码失败");
+                }
+            }
+            Bx6GScreenClient screen = connect(ip, port);
+            try {
+                int width = screen.getProfile().getWidth();
+                int height = screen.getProfile().getHeight();
+                if (page.getWidth() != width || page.getHeight() != height) {
+                    throw new IllegalArgumentException("平台画面尺寸 " + page.getWidth() + "×"
+                            + page.getHeight() + " 与控制卡 " + width + "×" + height + " 不一致");
+                }
+                DynamicBxAreaRule rule = new DynamicBxAreaRule();
+                rule.setId(DYNAMIC_AREA_ID);
+                rule.setImmediatePlay((byte) 1);
+                rule.setRunMode((byte) 0);
+                DynamicBxArea area = new DynamicBxArea(0, 0, width, height,
+                        screen.getProfile());
+                area.addPage(new ImageFileBxPage(image.getAbsolutePath()));
+                requireOk(screen.writeDynamic(rule, area), "发送班级画面失败");
+                return "平台班级画面已发送到 LED，请核对实体屏内容";
+            } finally { screen.disconnect(); }
+        } finally {
+            if (!image.delete()) image.deleteOnExit();
         }
     }
 

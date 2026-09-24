@@ -15,6 +15,7 @@ venv/
 # Data & logs
 data/
 logs/
+.local/
 
 # IDE
 .idea/
