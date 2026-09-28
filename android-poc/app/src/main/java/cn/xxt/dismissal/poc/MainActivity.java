@@ -1,11 +1,15 @@
 package cn.xxt.dismissal.poc;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.media.AudioManager;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
@@ -19,6 +23,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.json.JSONObject;
 
 /** Test client: settings come from the Mac platform; class and schedule data use live APIs. */
 public final class MainActivity extends Activity {
@@ -29,8 +36,13 @@ public final class MainActivity extends Activity {
     private final SerialCardProbe cardProbe = new SerialCardProbe();
     private final AnnouncementSpeaker speaker = new AnnouncementSpeaker();
     private final OnbonLedClient led = new OnbonLedClient();
+    private final AtomicBoolean ledSendQueued = new AtomicBoolean();
+    private final AtomicBoolean ledResendRequested = new AtomicBoolean();
     private final Map<String, String> spokenWindows = new HashMap<>();
+    private PlatformEndpoint endpoint;
     private DeviceConfigClient configClient;
+    private RemoteControlClient remote;
+    private UpdateManager updates;
     private ClassCatalog classes;
     private ScheduleCatalog schedules;
     private DismissalBoard board;
@@ -39,7 +51,11 @@ public final class MainActivity extends Activity {
     private boolean visible;
     private long lastDataSyncAt;
     private int lastAppliedLedVersion = -1;
-    private int page;
+    private volatile int page;
+    private long lastHeartbeatAt;
+    private long lastAutoLedEventAt;
+    private String lastAutoLedEventKey = "";
+    private JSONObject updateOffer;
     private Bitmap currentPreview;
     private final ArrayDeque<PendingSpeech> pendingSpeech = new ArrayDeque<>();
     private PendingSpeech activeSpeech;
@@ -63,11 +79,14 @@ public final class MainActivity extends Activity {
     private TextView ledStatus;
     private TextView pageStatus;
     private ImageView preview;
+    private TextView updateStatus;
+    private Button updateButton;
 
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             if (!visible) return;
             fetchFromPlatform(false);
+            pollRemote();
             handler.postDelayed(this, CONFIG_POLL_MS);
         }
     };
@@ -103,7 +122,10 @@ public final class MainActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        configClient = new DeviceConfigClient(this);
+        endpoint = new PlatformEndpoint(this);
+        configClient = new DeviceConfigClient(this, endpoint);
+        remote = new RemoteControlClient(this, endpoint);
+        updates = new UpdateManager(this, endpoint);
         classes = new ClassCatalog(this);
         schedules = new ScheduleCatalog(this);
         board = new DismissalBoard(this);
@@ -136,12 +158,50 @@ public final class MainActivity extends Activity {
         content.addView(preview, new LinearLayout.LayoutParams(-1, -2));
         pageStatus = addText(content, "", 14);
         addButton(content, "检查 LED 连接", v -> checkLed());
+        addText(content, "远程联调与升级", 20);
+        updateStatus = addText(content, "当前版本 " + BuildConfig.VERSION_NAME
+                + " · 平台 " + endpoint.hostForDisplay(), 16);
+        updateButton = addButton(content, "下载并安装新版", v -> installUpdate());
+        updateButton.setVisibility(View.GONE);
         addText(content, "话机通话、请假和留言的冲突处理尚需接入原话机应用；当前联调版只验证放学链路。", 14);
         setContentView(scroll);
 
         speaker.start(this, message -> runOnUiThread(() -> voiceStatus.setText(message)));
         showConfig("本机缓存，正在检查平台");
         renderPreview();
+        handlePairIntent(getIntent());
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handlePairIntent(intent);
+    }
+
+    private void handlePairIntent(Intent intent) {
+        if (intent == null || intent.getData() == null) return;
+        try {
+            String[] pair = PlatformEndpoint.parsePairUri(intent.getData());
+            String host = new java.net.URI(pair[0]).getHost();
+            new AlertDialog.Builder(this).setTitle("连接测试平台")
+                    .setMessage("话机将连接 " + host + "，从这里获取放学配置和远程测试命令。")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("连接", (dialog, which) -> {
+                        endpoint.save(pair[0], pair[1]);
+                        configClient.clearCache();
+                        remote.clearForNewPlatform();
+                        config = null;
+                        lastAppliedLedVersion = -1;
+                        lastHeartbeatAt = 0;
+                        updateStatus.setText("正在连接 " + endpoint.hostForDisplay() + "…");
+                        showConfig("已更换平台，正在拉取配置");
+                        updateReader();
+                        fetchFromPlatform(true);
+                        pollRemote();
+                    }).show();
+        } catch (Exception error) {
+            updateStatus.setText("平台配对失败：" + errorText(error));
+        }
     }
 
     private TextView addText(LinearLayout parent, String value, int size) {
@@ -154,11 +214,12 @@ public final class MainActivity extends Activity {
         return text;
     }
 
-    private void addButton(LinearLayout parent, String label, View.OnClickListener click) {
+    private Button addButton(LinearLayout parent, String label, View.OnClickListener click) {
         Button button = new Button(this);
         button.setText(label);
         button.setOnClickListener(click);
         parent.addView(button);
+        return button;
     }
 
     private void fetchFromPlatform(boolean forceData) {
@@ -348,6 +409,105 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void pollRemote() {
+        io.execute(() -> {
+            try { remote.flushPending(); }
+            catch (Exception error) { android.util.Log.w("DismissalRemote", "旧诊断暂未回传", error); }
+            try {
+                JSONObject control = remote.fetch();
+                JSONObject release = control.optJSONObject("release");
+                runOnUiThread(() -> showRelease(release));
+                JSONObject command = control.optJSONObject("command");
+                if (command != null) executeRemoteCommand(command);
+                long now = System.currentTimeMillis();
+                if (now - lastHeartbeatAt >= 120_000) {
+                    lastHeartbeatAt = now;
+                    remote.report("heartbeat", true, "话机在线", config);
+                }
+            } catch (Exception error) {
+                runOnUiThread(() -> updateStatus.setText("远程平台暂不可达：" + error.getMessage()
+                        + " · 当前版本 " + BuildConfig.VERSION_NAME));
+            }
+        });
+    }
+
+    private void executeRemoteCommand(JSONObject command) {
+        String id = command.optString("id", "");
+        String type = command.optString("type", "");
+        if (!id.matches("[0-9a-f]{32}") || remote.alreadyExecuted(id)) return;
+        DeviceConfig current = config;
+        String result;
+        boolean success;
+        try {
+            if (current == null || !current.ledEnabled) {
+                throw new IllegalStateException("平台未启用 LED，无法执行远程检测");
+            }
+            if ("led_ping".equals(type)) {
+                result = led.ping(current.ledIp, current.ledPort);
+            } else if ("led_send_page".equals(type)) {
+                Bitmap image = LedBoardRenderer.render(classes.classes(), board,
+                        current.ledStyle, page);
+                try {
+                    result = led.sendBoardPage(current.ledIp, current.ledPort,
+                            image, getCacheDir());
+                } finally { image.recycle(); }
+            } else {
+                throw new IllegalArgumentException("未知远程命令：" + type);
+            }
+            success = true;
+        } catch (Exception error) {
+            result = errorText(error);
+            success = false;
+        }
+        String message = result;
+        boolean accepted = success;
+        runOnUiThread(() -> ledStatus.setText("远程检测" + (accepted ? "成功：" : "失败：") + message));
+        remote.reportCommand(type, success, result, current, id);
+    }
+
+    private void showRelease(JSONObject release) {
+        updateOffer = updates.isNewer(release) ? release : null;
+        updateButton.setVisibility(updateOffer == null ? View.GONE : View.VISIBLE);
+        updateStatus.setText(updateOffer == null
+                ? "当前版本 " + BuildConfig.VERSION_NAME + " · 平台 " + endpoint.hostForDisplay()
+                : "可升级到 " + updateOffer.optString("versionName")
+                + " · 下载后需在话机上确认安装");
+    }
+
+    private void installUpdate() {
+        JSONObject offer = updateOffer;
+        if (offer == null) return;
+        if (!getPackageManager().canRequestPackageInstalls()) {
+            updateStatus.setText("请允许本应用安装未知来源应用，返回后再次点击升级");
+            startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + getPackageName())));
+            return;
+        }
+        updateStatus.setText("正在下载并校验升级包…");
+        io.execute(() -> {
+            try {
+                Uri packageUri = updates.downloadAndVerify(offer);
+                remote.report("update", true, "升级包已验证，等待用户确认安装", config);
+                runOnUiThread(() -> {
+                    try {
+                        Intent install = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+                        install.setDataAndType(packageUri, "application/vnd.android.package-archive");
+                        install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        startActivity(install);
+                        updateStatus.setText("请按安卓系统提示确认安装；完成后重新打开应用");
+                    } catch (Exception error) {
+                        updateStatus.setText("打开系统安装界面失败：" + errorText(error));
+                        io.execute(() -> remote.report("update", false,
+                                "打开安装界面失败：" + errorText(error), config));
+                    }
+                });
+            } catch (Exception error) {
+                remote.report("update", false, errorText(error), config);
+                runOnUiThread(() -> updateStatus.setText("升级失败：" + errorText(error)));
+            }
+        });
+    }
+
     private void checkLed() {
         DeviceConfig current = config;
         if (current == null || !current.ledEnabled) {
@@ -358,28 +518,64 @@ public final class MainActivity extends Activity {
         io.execute(() -> {
             String result;
             try { result = led.ping(current.ledIp, current.ledPort); }
-            catch (Exception error) { result = "控制卡连接失败：" + error.getMessage(); }
+            catch (Exception error) { result = "控制卡连接失败：" + errorText(error); }
             String message = result;
             runOnUiThread(() -> ledStatus.setText(message));
-            configClient.reportLed(result.startsWith("已连接"), "连接检测", result, current);
+            remote.report("led_ping", result.startsWith("已连接"), result, current);
         });
     }
 
     private void sendLedPage(DeviceConfig current) {
+        if (!ledSendQueued.compareAndSet(false, true)) {
+            ledResendRequested.set(true);
+            return;
+        }
         int selectedPage = page;
         io.execute(() -> {
-            Bitmap image = LedBoardRenderer.render(classes.classes(), board,
-                    current.ledStyle, selectedPage);
+            Bitmap image = null;
             try {
+                image = LedBoardRenderer.render(classes.classes(), board,
+                        current.ledStyle, selectedPage);
                 String message = led.sendBoardPage(current.ledIp, current.ledPort,
                         image, getCacheDir());
                 runOnUiThread(() -> ledStatus.setText(message));
-                configClient.reportLed(true, "发送班级画面", message, current);
+                reportAutoLed(true, message, current);
             } catch (Exception error) {
-                runOnUiThread(() -> ledStatus.setText("LED 发送失败：" + error.getMessage()));
-                configClient.reportLed(false, "发送班级画面", String.valueOf(error.getMessage()), current);
-            } finally { image.recycle(); }
+                String detail = errorText(error);
+                runOnUiThread(() -> ledStatus.setText("LED 发送失败：" + detail));
+                reportAutoLed(false, detail, current);
+            } finally {
+                if (image != null) image.recycle();
+                ledSendQueued.set(false);
+                if (ledResendRequested.getAndSet(false)) {
+                    DeviceConfig active = config;
+                    if (active != null && active.ledEnabled) sendLedPage(active);
+                }
+            }
         });
+    }
+
+    private void reportAutoLed(boolean success, String message, DeviceConfig current) {
+        String key = success + ":" + message;
+        long now = System.currentTimeMillis();
+        if (!key.equals(lastAutoLedEventKey) || now - lastAutoLedEventAt >= 60_000) {
+            lastAutoLedEventKey = key;
+            lastAutoLedEventAt = now;
+            remote.report("led_send_page", success, message, current);
+        }
+    }
+
+    private static String errorText(Throwable error) {
+        String message = error.getMessage();
+        String detail = error.getClass().getSimpleName()
+                + (message == null || message.trim().isEmpty() ? "" : "：" + message);
+        Throwable cause = error.getCause();
+        if (cause != null && cause != error) {
+            String causeMessage = cause.getMessage();
+            detail += "；原因 " + cause.getClass().getSimpleName()
+                    + (causeMessage == null || causeMessage.trim().isEmpty() ? "" : "：" + causeMessage);
+        }
+        return detail;
     }
 
     @Override protected void onResume() {

@@ -12,18 +12,36 @@
 
 Mac 测试平台的设置页在 Mac 本机 `http://127.0.0.1:8766/admin`。安卓端没有学校、语音和 LED 的本地设置入口。配置缓存只用于平台短时不可达时继续显示已下发的内容；服务端仍是唯一编辑处。
 
-## 启动 Mac 测试平台
+## 现场最短操作
 
-1. 在仓库根目录运行 `python3 tools/android_mock_platform.py`。设备只读接口监听 Mac 本机 8765，编辑页监听 8766。公开地址只代理 8765，所以外网无法打开编辑页或修改配置。
-2. 如果话机与 Mac 不在同一个局域网，运行 `/opt/homebrew/opt/cloudflared/bin/cloudflared tunnel --url http://127.0.0.1:8765 --no-autoupdate`，取得临时 HTTPS 地址。临时地址在隧道重启后会变化，仅用于联调。
-3. 构建时将地址作为 `TEST_PLATFORM_URL` 环境变量，并把 `.local/android_device_report_token` 的内容作为 `DEVICE_REPORT_TOKEN` 环境变量传入；还需设置 `JAVA_HOME`、`ANDROID_HOME`，运行 `./gradlew :app:assembleDebug --offline --no-daemon`。构建前需运行 `bash setup-vendor-sdk.sh` 复制本机已有的仰邦 Android SDK。
-4. 安装 `app/build/outputs/apk/debug/app-debug.apk`，保持话机联网并打开“放学系统安卓联调”。屏幕应显示配置版本、38 个班级、72 张班级卡以及 2 组放学时间（学校 40125 在 2026-09-24 的接口数据）。
+1. Mac 上从仓库根目录运行 `python3 tools/start_android_remote_test.py`，保持该终端运行；打开 `http://127.0.0.1:8766/admin`。脚本同时启动测试平台和临时 HTTPS 隧道，关闭脚本会一起停止。
+2. 在话机上扫描管理页的**安装包二维码**，下载联调版并按安卓提示确认安装。首次安装或从旧版升级到 v0.5.0 时需要这一步。
+3. 打开话机的“放学系统安卓联调”，再扫描管理页的**平台配对二维码**，在话机上点“连接”。屏幕会显示平台配置、班级数量和当前版本。
+4. 测试时保持联调版页面打开。Mac 管理页点“远程检查 LED 连接”或“远程发送当前班级画面”，约 30 秒内查看命令状态与回传错误。`已下发` 只表示排队，`已完成` 才表示话机执行并回报；实体 LED 内容仍需现场核对。
 
-## 远程安装与 LED 诊断
+话机和 Mac 可以不在同一个局域网，只需话机可上网且话机能连接 LED 控制卡所在局域网。临时公网地址变化后，已安装 v0.5.0 的话机重新扫描**平台配对二维码**即可，无需仅为改地址而重装 APK。旧版没有配对能力，仍须人工安装一次新版引导包。
 
-测试平台运行时设置 `ANDROID_MOCK_PUBLIC_URL` 为当前临时 HTTPS 地址。Mac 管理页 `http://127.0.0.1:8766/admin` 会显示新版 APK 的下载链接和话机最近一次 LED 诊断。话机可用浏览器打开该链接安装 APK；Android 安装确认仍需在话机上操作。更新 APK 后，连接检测和每次 LED 画面发送会把 SDK 返回结果经 8765 接口回传，管理页约 5 秒刷新一次。诊断只包含发送阶段、结果、应用版本、配置版本和控制卡地址，不包含刷卡号或学生数据。
+## 从 Mac 发布新测试版
 
-诊断接口只接受 `.local/android_device_report_token` 对应的设备令牌。APK 下载链接使用单独的 `.local/android_apk_download_token`；两者均为本地联调凭据，不要加入版本库。临时 HTTPS 隧道重启后须更新平台公开地址并重新构建 APK。屏幕显示“已连接”只证明连接检测成功；实际画面发送还要根据返回错误和实体屏观察判断。
+修改代码后将 Android `versionCode` 递增，用同一签名构建 APK。在管理页选中 APK，点“发布选中的 APK”。平台会核对包名、签名和版本号，保存不可变文件及 SHA-256；话机轮询到更高版本后显示“下载并安装新版”。现场人员点击、允许该应用安装未知来源应用（首次）并确认安卓系统安装。管理页的“已发布”不代表已装到话机；安装后重新打开应用，看到新版本心跳才算设备升级成功。
+
+构建命令从工作树根目录执行：
+
+```sh
+cd android-poc
+read -r DEVICE_REPORT_TOKEN < ../.local/android_device_report_token
+read -r TEST_PLATFORM_URL < ../.local/current_public_url
+export DEVICE_REPORT_TOKEN TEST_PLATFORM_URL
+JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
+ANDROID_HOME=/Users/szjxxiangmubu/Andriod \
+./gradlew :app:assembleDebug --offline --no-daemon
+```
+
+构建前若本机缺少仰邦 SDK，运行 `bash setup-vendor-sdk.sh`。同一 Android 包名必须沿用相同签名；本机 `.local/android_signer_sha256` 固定了已安装联调版的签名指纹。`.local/` 中的设备令牌、下载令牌、配对令牌和发布记录不纳入版本库。
+
+## 远程诊断边界
+
+话机页面打开时每 30 秒轮询远程命令，定期上报版本在线状态。LED 连接/发送结果会保存为最近 100 条诊断记录；网络短时中断时，话机最多缓存 100 条待回传事件。诊断不含刷卡号、学生信息或原始串口数据。当前独立调试 APK 离开页面后不轮询，常驻运行和电话/请假/留言冲突需接入原话机应用。临时隧道只用于测试，正式远程运维需换稳定 HTTPS 服务端。
 
 Android APK 使用安卓标准 `TextToSpeech`。GT-10M 原系统没有中文 TTS 引擎；本次设备已另装 Sherpa-ONNX 中文离线引擎，并设为默认。后续交付需确定引擎安装、授权和升级方式。音频是否真正由功放和音柱播放，仍需现场听测。
 
@@ -37,9 +55,9 @@ Android APK 使用安卓标准 `TextToSpeech`。GT-10M 原系统没有中文 TTS
 
 ## LED
 
-只有 Mac 配置启用 LED 并下发控制卡 IP、端口和尺寸后，安卓端才尝试连接和发送画面。班级画面与预览使用同一渲染器，动态区 0 由仰邦 Android Ethernet SDK 发送。连接的 BX-6E1XP 控制卡尚未到场；构建和预览不能证明实体 LED 已正确显示。
+只有 Mac 配置启用 LED 并下发控制卡 IP、端口和尺寸后，安卓端才尝试连接和发送画面。班级画面与预览使用同一渲染器，动态区 0 由仰邦 Android Ethernet SDK 发送。此前现场出现“连接成功、发送未确认成功”，具体 SDK 错误尚未回传；构建和预览不能证明实体 LED 已正确显示。
 
 ## 已验证与待验证
 
-- 已验证：Mac 本机编辑接口可更新版本；临时 HTTPS 地址可只读获取配置，公开地址无法修改；安卓设备读到配置 v1、现有接口同步 38 个班级、72 张卡和 2 组时间；Mac 更新到 v2 后设备能拉取 v2；中文语音引擎初始化成功。
-- 待现场验证：同一张及多张卡连续刷 3～5 次时的完整帧、班级识别、准确播报文本、语速/音量/遍数、功放音柱实际发声；控制卡连接和实际 LED 画面；原话机应用内的电话、请假、留言冲突处理。
+- 已验证：Mac 本机编辑、远程命令、事件回报、APK 签名/版本发布及公网下载链路；历史测试中，安卓设备读到平台配置并同步 38 个班级、72 张卡和 2 组时间，中文语音引擎初始化成功。
+- 待话机验证：v0.5.0 安装、二维码配对、远程命令执行与诊断回传、应用内升级；多张卡反复刷卡、功放音柱实际发声及实体 LED 画面。原话机应用内的电话、请假、留言冲突处理未接入。

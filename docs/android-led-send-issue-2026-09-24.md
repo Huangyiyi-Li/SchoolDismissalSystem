@@ -1,6 +1,6 @@
 # 安卓话机 LED 发送失败问题存档
 
-状态：**搁置开发，待现场恢复排查**。记录时间：2026-09-24。
+状态：**2026-09-28 已恢复远程联调准备，实体 LED 故障仍待诊断**。原始记录时间：2026-09-24。
 
 ## 现象
 
@@ -19,7 +19,7 @@ GT-10M 安卓 9 话机运行独立的“放学模块·联调版”。平台已�
 
 ## 存档位置与版本状态
 
-- 开发工作树：`/Users/szjxxiangmubu/.codex/worktrees/android-dismissal-poc/无屏放学系统`，分支 `codex/android-feasibility`，上次提交 `64ed4e3`。本次诊断改动还在工作树中，**未提交**。
+- 开发工作树：`/Users/szjxxiangmubu/.codex/worktrees/android-dismissal-poc/无屏放学系统`，分支 `codex/android-feasibility`。原始问题和 v0.4.2 诊断改动已存于提交 `d97b24c`。
 - APK：`/Users/szjxxiangmubu/Downloads/放学模块联调-v0.4.2-debug.apk`；SHA-256：`04eaadac707483cf8c17a48dcbda19982e789f1ed94033fb596b701db19c9d3b`。
 - 平台配置与诊断文件位于工作树的 `.local/`，未纳入版本控制。归档时停止 Mac 测试平台和临时 HTTPS 隧道；现有下载链接随即失效。恢复时需重新启动服务、取得新的隧道地址，并重新构建 APK 中的平台地址。
 
@@ -30,4 +30,6 @@ GT-10M 安卓 9 话机运行独立的“放学模块·联调版”。平台已�
 3. 按错误分类排查：超时/连接中断查话机到控制卡网络；NACK/参数错误查控制卡屏参和动态区参数；图片相关错误查 Android SDK 图像编码与页面格式。必要时对照 `led-bridge/src/cn/xxt/dismissal/led/OnbonLedBridge.java` 的 Windows 发送参数。
 4. 修改后以实体 LED 画面显示为验收依据；连接成功、APK 构建通过、平台收到诊断均不能代替实体屏验收。
 
-本问题搁置期间，不继续开发或推断修复结果。
+2026-09-28 新增远程命令、诊断历史、测试版发布和配对能力；接口契约见 `docs/android-remote-test-contract.md`。这些能力用于取得具体 SDK 错误，不能据此推断实体 LED 故障已修复。
+
+2026-09-28 发布的引导包是 v0.5.0（版本号 8，SHA-256 `ed799d630d40bda8794a83c247bdfc235030075ccffec9fba117bd7fad2ad760`）。v0.5.1（版本号 9）已在本机生成，暂不发布，留作话机完成首次安装后的应用内升级测试。截至本次记录，管理页仍没有收到话机事件，LED 具体错误和升级效果均未取得现场证据。

@@ -7,7 +7,6 @@ import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -15,9 +14,11 @@ import java.nio.charset.StandardCharsets;
 /** Pulls test-only settings from this Mac. Production will use the platform URL. */
 final class DeviceConfigClient {
     private final SharedPreferences prefs;
+    private final PlatformEndpoint endpoint;
 
-    DeviceConfigClient(Context context) {
+    DeviceConfigClient(Context context, PlatformEndpoint endpoint) {
         prefs = context.getSharedPreferences("platform_config_cache", Context.MODE_PRIVATE);
+        this.endpoint = endpoint;
     }
 
     DeviceConfig cached() {
@@ -29,9 +30,13 @@ final class DeviceConfigClient {
         }
     }
 
+    void clearCache() {
+        prefs.edit().clear().commit();
+    }
+
     DeviceConfig fetch() throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(
-                BuildConfig.TEST_PLATFORM_URL + "/api/device-config").openConnection();
+                endpoint.baseUrl() + "/api/device-config").openConnection();
         try {
             connection.setConnectTimeout(4000);
             connection.setReadTimeout(4000);
@@ -64,37 +69,4 @@ final class DeviceConfigClient {
         }
     }
 
-    void reportLed(boolean success, String stage, String message, DeviceConfig config) {
-        if (BuildConfig.DEVICE_REPORT_TOKEN.isEmpty()) return;
-        HttpURLConnection connection = null;
-        try {
-            JSONObject data = new JSONObject();
-            data.put("success", success);
-            data.put("stage", stage);
-            data.put("message", message);
-            data.put("appVersion", BuildConfig.VERSION_NAME);
-            data.put("configVersion", config.version);
-            data.put("controller", config.ledIp + ":" + config.ledPort);
-            byte[] body = data.toString().getBytes(StandardCharsets.UTF_8);
-            connection = (HttpURLConnection) new URL(
-                    BuildConfig.TEST_PLATFORM_URL + "/api/led-diagnostic").openConnection();
-            connection.setRequestMethod("POST");
-            connection.setConnectTimeout(2500);
-            connection.setReadTimeout(2500);
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            connection.setRequestProperty("X-Device-Token", BuildConfig.DEVICE_REPORT_TOKEN);
-            connection.setFixedLengthStreamingMode(body.length);
-            try (OutputStream output = connection.getOutputStream()) {
-                output.write(body);
-            }
-            if (connection.getResponseCode() != 200) {
-                android.util.Log.w("DismissalLed", "诊断回传 HTTP " + connection.getResponseCode());
-            }
-        } catch (Exception error) {
-            android.util.Log.w("DismissalLed", "诊断回传失败", error);
-        } finally {
-            if (connection != null) connection.disconnect();
-        }
-    }
 }
