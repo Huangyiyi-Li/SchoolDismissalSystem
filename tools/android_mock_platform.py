@@ -15,7 +15,7 @@ import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from android_remote_control import MAX_APK_BYTES, RemoteControlStore
 
@@ -25,6 +25,7 @@ DIAGNOSTIC_FILE = STATE_FILE.with_name("android_led_diagnostic.json")
 TOKEN_FILE = STATE_FILE.with_name("android_device_report_token")
 APK_TOKEN_FILE = STATE_FILE.with_name("android_apk_download_token")
 PAIR_TOKEN_FILE = STATE_FILE.with_name("android_pair_token")
+PAIR_CODE_FILE = STATE_FILE.with_name("android_pair_code")
 APK_FILE = Path(__file__).resolve().parent.parent / "android-poc/app/build/outputs/apk/debug/app-debug.apk"
 PUBLIC_URL = os.environ.get("ANDROID_MOCK_PUBLIC_URL", "").rstrip("/")
 CONFIG_LOCK = threading.Lock()
@@ -37,6 +38,14 @@ def ensure_tokens():
         if not path.exists():
             path.write_text(secrets.token_hex(bytes_count), encoding="utf-8")
         path.chmod(0o600)
+    if not PAIR_CODE_FILE.exists():
+        alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+        PAIR_CODE_FILE.write_text("".join(secrets.choice(alphabet) for _ in range(8)), encoding="utf-8")
+    PAIR_CODE_FILE.chmod(0o600)
+
+
+def pair_code():
+    return PAIR_CODE_FILE.read_text(encoding="utf-8").strip()
 
 
 def pair_url():
@@ -51,6 +60,22 @@ def pair_html():
             "<h1>连接放学联调平台</h1><p>请在已安装联调版的话机上点下面的按钮。</p>"
             f"<p><a href='{html.escape(deep_link, quote=True)}'>连接话机应用</a></p>"
             "<p>连接后返回放学模块，等待状态更新。</p></body></html>")
+
+
+def setup_html():
+    apk = download_url()
+    install = (f"<p><a href='{html.escape(apk, quote=True)}'>1. 下载并安装放学联调版</a></p>"
+               if apk else "<p>安装包尚未发布，请联系 Mac 管理员。</p>")
+    return ("<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>放学联调版安装</title><body style='font:20px sans-serif;padding:24px;line-height:1.6'>"
+            "<h1>放学联调版</h1>" + install +
+            "<p>2. 安装后打开应用，再回到本页输入 Mac 管理页显示的 8 位配对码。</p>"
+            "<form method='post' action='/connect'>"
+            "<input name='code' maxlength='8' autocomplete='off' autocapitalize='characters' "
+            "style='font-size:24px;width:180px' aria-label='8位配对码'>"
+            "<button style='font-size:20px'>连接平台</button></form>"
+            "<p>如浏览器询问是否打开应用，请选择允许。</p></body></html>")
 
 
 def qr_png(value):
@@ -193,7 +218,9 @@ button{font-size:17px;padding:10px 20px}small{color:#576477}</style><main>
 <button onclick="publish()">发布选中的 APK</button><p id="publishStatus"></p>
 <p id="download"></p>
 <img id="apkQr" alt="测试版安装包二维码" width="256" height="256">
-<p>用话机扫描上方二维码安装测试版；安装后扫描下方二维码连接平台。临时公网地址变化时，只需重新扫描下方二维码。</p>
+<p><strong>话机不能扫码：</strong>在话机浏览器输入下面的安装页地址。安装后回到同一页，输入下方 8 位配对码。</p>
+<p id="setupUrl"></p><p id="pairCode"></p>
+<p>如果话机能扫码，也可以扫描上方二维码安装、下方二维码配对。</p>
 <img id="pairQr" alt="话机配对二维码" width="216" height="216"><p id="pairLink"></p>
 </fieldset>
 <small>本页仅是 Mac 测试平台；正式服务端接口需按相同字段实现。</small></main>
@@ -235,11 +262,23 @@ let x=await r.json();id('publishStatus').textContent=r.ok?'已发布 '+x.data.ve
 loadRemote();loadDownload();}
 async function loadPair(){let r=await fetch('/api/pair-link');let x=await r.json();
 if(x.data.url){id('pairQr').src='/api/pair-qr.png';let a=document.createElement('a');a.href=x.data.url;a.textContent='话机配对链接';
-id('pairLink').replaceChildren(a);}else{id('pairQr').hidden=true;id('pairLink').textContent='未配置公网地址';}}
+id('pairLink').replaceChildren(a);}else{id('pairQr').hidden=true;id('pairLink').textContent='未配置公网地址';}
+let info=await (await fetch('/api/setup-info')).json();
+id('setupUrl').textContent=info.data.url?'安装页地址：'+info.data.url:'公网入口尚未启动';
+id('pairCode').textContent=info.data.url?'配对码：'+info.data.code:'';}
 load();loadDiagnostic();loadRemote();loadDownload();loadPair();setInterval(()=>{loadDiagnostic();loadRemote();},5000);</script></html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _html(self, status, body):
+        data = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _json(self, status, payload):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
@@ -268,7 +307,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == "/api/device-config":
+        if path in ("/", "/setup") and PUBLIC_URL:
+            self._html(200, setup_html())
+        elif path == "/api/device-config":
             self._json(200, {"code": 200, "data": read_config()})
         elif path == "/api/device-control":
             if self._authorized():
@@ -299,6 +340,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/connect" and PUBLIC_URL:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 1 <= size <= 64:
+                self._html(400, "<meta charset='utf-8'><p>配对码无效。请返回安装页重试。</p>")
+                return
+            submitted = parse_qs(self.rfile.read(size).decode("utf-8", errors="replace")).get("code", [""])[0]
+            if not secrets.compare_digest(submitted.strip().upper(), pair_code()):
+                self._html(403, "<meta charset='utf-8'><p>配对码不正确。请返回安装页核对。</p>")
+                return
+            self._html(200, pair_html())
+            return
         if path not in ("/api/led-diagnostic", "/api/device-events"):
             self._json(405, {"code": 405, "message": "Read only"})
             return
@@ -353,6 +405,8 @@ class AdminHandler(Handler):
             self._json(200, {"code": 200, "data": REMOTE.admin_state()})
         elif path == "/api/pair-link":
             self._json(200, {"code": 200, "data": {"url": pair_url()}})
+        elif path == "/api/setup-info":
+            self._json(200, {"code": 200, "data": {"url": PUBLIC_URL + "/" if PUBLIC_URL else "", "code": pair_code()}})
         elif path == "/api/pair-qr.png" and PUBLIC_URL:
             body = qr_png(pair_url())
             self.send_response(200)

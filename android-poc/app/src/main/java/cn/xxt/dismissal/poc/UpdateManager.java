@@ -82,20 +82,32 @@ final class UpdateManager {
 
     private void verifyPackage(File apk, int expectedCode) throws Exception {
         PackageManager manager = context.getPackageManager();
+        int signatureFlags = PackageManager.GET_SIGNING_CERTIFICATES | PackageManager.GET_SIGNATURES;
         PackageInfo archive = manager.getPackageArchiveInfo(
-                apk.getAbsolutePath(), PackageManager.GET_SIGNING_CERTIFICATES);
+                apk.getAbsolutePath(), signatureFlags);
         PackageInfo installed = manager.getPackageInfo(
-                context.getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES);
-        if (archive == null || !context.getPackageName().equals(archive.packageName)
-                || archive.getLongVersionCode() != expectedCode || archive.signingInfo == null
-                || installed.signingInfo == null) {
-            throw new IllegalStateException("升级包包名、版本或签名信息无效");
+                context.getPackageName(), signatureFlags);
+        if (archive == null) throw new IllegalStateException("安卓无法读取已下载 APK 的包信息");
+        if (!context.getPackageName().equals(archive.packageName)) {
+            throw new IllegalStateException("升级包包名不匹配：" + archive.packageName);
         }
-        Signature[] updateSigners = archive.signingInfo.getApkContentsSigners();
-        Signature[] installedSigners = installed.signingInfo.getApkContentsSigners();
+        if (archive.getLongVersionCode() != expectedCode) {
+            throw new IllegalStateException("升级包版本不匹配：" + archive.getLongVersionCode());
+        }
+        Signature[] updateSigners = signers(archive, "升级包");
+        Signature[] installedSigners = signers(installed, "当前应用");
         if (!Arrays.equals(updateSigners, installedSigners)) {
             throw new IllegalStateException("升级包签名与已安装应用不一致");
         }
+    }
+
+    private static Signature[] signers(PackageInfo info, String label) {
+        Signature[] result = info.signingInfo != null
+                ? info.signingInfo.getApkContentsSigners() : info.signatures;
+        if (result == null || result.length == 0) {
+            throw new IllegalStateException(label + "缺少签名信息");
+        }
+        return result;
     }
 
     private static String toHex(byte[] bytes) {

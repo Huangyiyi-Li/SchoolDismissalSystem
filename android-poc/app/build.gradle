@@ -11,8 +11,8 @@ android {
         applicationId 'cn.xxt.dismissal.poc'
         minSdk 28
         targetSdk 28
-        versionCode 9
-        versionName '0.5.1'
+        versionCode 11
+        versionName '0.5.3'
         def testPlatformUrl = System.getenv('TEST_PLATFORM_URL') ?: 'https://example.invalid'
         buildConfigField 'String', 'TEST_PLATFORM_URL', '"' + testPlatformUrl + '"'
         def deviceReportToken = System.getenv('DEVICE_REPORT_TOKEN') ?: ''

@@ -20,12 +20,13 @@ class RemotePlatformHttpTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.saved = {name: getattr(platform, name) for name in
                       ("STATE_FILE", "DIAGNOSTIC_FILE", "TOKEN_FILE", "APK_TOKEN_FILE",
-                       "PAIR_TOKEN_FILE", "APK_FILE", "PUBLIC_URL", "REMOTE")}
+                       "PAIR_TOKEN_FILE", "PAIR_CODE_FILE", "APK_FILE", "PUBLIC_URL", "REMOTE")}
         platform.STATE_FILE = self.root / "config.json"
         platform.DIAGNOSTIC_FILE = self.root / "diagnostic.json"
         platform.TOKEN_FILE = self.root / "report_token"
         platform.APK_TOKEN_FILE = self.root / "download_token"
         platform.PAIR_TOKEN_FILE = self.root / "pair_token"
+        platform.PAIR_CODE_FILE = self.root / "pair_code"
         platform.APK_FILE = self.root / "bootstrap.apk"
         platform.APK_FILE.write_bytes(b"PK-bootstrap")
         platform.PUBLIC_URL = "https://example.com"
@@ -103,6 +104,24 @@ class RemotePlatformHttpTest(unittest.TestCase):
         status, apk_qr = self.request(self.admin, "/api/apk-qr.png")
         self.assertEqual(status, 200)
         self.assertTrue(apk_qr.startswith(b"\x89PNG"))
+
+    def test_manual_install_and_pairing(self):
+        status, landing = self.request(self.device, "/")
+        self.assertEqual(status, 200)
+        self.assertIn(b"/connect", landing)
+        self.assertNotIn(platform.report_token().encode(), landing)
+        info = json.loads(self.request(self.admin, "/api/setup-info")[1])["data"]
+        self.assertEqual(info["url"], "https://example.com/")
+        self.assertEqual(len(info["code"]), 8)
+        with self.assertRaises(urllib.error.HTTPError) as denial:
+            self.request(self.device, "/connect", b"code=WRONG123",
+                         content_type="application/x-www-form-urlencoded")
+        self.assertEqual(denial.exception.code, 403)
+        status, paired = self.request(self.device, "/connect",
+                                      ("code=" + info["code"].lower()).encode(),
+                                      content_type="application/x-www-form-urlencoded")
+        self.assertEqual(status, 200)
+        self.assertIn(b"xxtdismissal://connect", paired)
 
     def test_admin_script_parses(self):
         if shutil.which("node") is None:
