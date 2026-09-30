@@ -47,9 +47,14 @@ def probe(output_dir, count, interval):
                     stream.Open(str(output.resolve()), 3)
                     voice.AudioOutputStream = stream
                     print(f"{name}: audio stream ready", flush=True)
+                    def record(event, **kwargs):
+                        entry = {"event": event, **{key: str(value) if isinstance(value, Exception) else value
+                                                    for key, value in kwargs.items()}}
+                        evidence["events"].append(entry)
+                        print(json.dumps({"case": name, **entry}), flush=True)
+
                     for event in ("started-utterance", "started-word", "finished-utterance", "error"):
-                        engine.connect(event, lambda event=event, **kwargs:
-                                       evidence["events"].append({"event": event, **kwargs}))
+                        engine.connect(event, lambda event=event, **kwargs: record(event, **kwargs))
                     return engine
 
                 started = time.monotonic()
@@ -73,6 +78,7 @@ def probe(output_dir, count, interval):
         thread.wait(20)
     if thread.isRunning():
         print(json.dumps({"error": "TTS did not finish in 60 seconds", "case": name}), flush=True)
+        (output_dir / f"{name}.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
         import os
         os._exit(2)
     try:
