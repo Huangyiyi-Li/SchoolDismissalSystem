@@ -1,6 +1,9 @@
 name: Diagnose real Windows TTS
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/windows-voice-repeat
 permissions:
   contents: read
 jobs:
