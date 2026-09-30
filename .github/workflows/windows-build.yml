@@ -6,6 +6,7 @@ on:
     branches:
       - master
       - codex/2.0-upgrade
+      - codex/android-dismissal-remote-test
     tags:
       - "v*"
 
