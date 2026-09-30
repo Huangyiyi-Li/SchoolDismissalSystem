@@ -11,6 +11,8 @@ import json
 import os
 import secrets
 import subprocess
+
+import qrcode
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -79,11 +81,16 @@ def setup_html():
 
 
 def qr_png(value):
-    result = subprocess.run(["/usr/bin/swift", str(Path(__file__).with_name("create_qr.swift"))],
-                            input=value.encode("utf-8"), capture_output=True, timeout=30)
-    if result.returncode != 0 or not result.stdout.startswith(b"\x89PNG"):
+    """Generate a portable PNG QR code without relying on macOS Swift."""
+    import io
+
+    image = qrcode.make(value)
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    payload = output.getvalue()
+    if not payload.startswith(b"\x89PNG"):
         raise RuntimeError("无法生成配对二维码")
-    return result.stdout
+    return payload
 
 
 def download_url():
