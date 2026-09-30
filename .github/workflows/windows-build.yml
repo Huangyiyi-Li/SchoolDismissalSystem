@@ -125,6 +125,27 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      - name: Publish branch beta pre-release
+        if: ${{ github.ref == 'refs/heads/codex/android-dismissal-remote-test' && contains(steps.app_info.outputs.version, '-beta.') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "v${{ steps.app_info.outputs.version }}"
+          $notes = Get-Content "release-notes/$tag.md" -Raw
+          $notes = $notes.Replace("{{COMMIT_SHA}}", "${{ github.sha }}")
+          Set-Content "dist/release-notes.md" $notes -Encoding utf8
+          gh release delete "$tag" --yes --cleanup-tag 2>$null
+          gh release create "$tag" `
+            "dist/${{ steps.app_info.outputs.zip_name }}" `
+            "dist/${{ steps.app_info.outputs.sha_name }}" `
+            "dist/${{ steps.app_info.outputs.setup_name }}" `
+            "dist/${{ steps.app_info.outputs.setup_sha_name }}" `
+            --target "${{ github.sha }}" `
+            --title "$tag" `
+            --notes-file "dist/release-notes.md" `
+            --prerelease
+
       - name: Prepare checksums for Release download names
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         shell: pwsh
