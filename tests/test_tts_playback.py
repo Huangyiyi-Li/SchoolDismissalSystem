@@ -73,19 +73,22 @@ class TtsPlaybackTests(unittest.TestCase):
         self.assertEqual(engine.run_count, 1)
         self.assertEqual(waits, [10])
 
-    def test_natural_pause_can_stop_after_current_repeat(self):
+    def test_natural_pause_submits_all_repeats_as_one_utterance(self):
         engine = FakeEngine()
         checks = []
 
         play_tts_message(
             engine,
             "一年级一班正在放学",
-            repeat_count=10,
+            repeat_count=3,
             interval_seconds=0,
-            wait_fn=lambda seconds: checks.append(seconds) or len(checks) > 1,
+            wait_fn=lambda seconds: checks.append(seconds) or False,
         )
 
-        self.assertEqual(engine.texts, ["一年级一班正在放学，"])
+        self.assertEqual(
+            engine.texts,
+            ["一年级一班正在放学，一年级一班正在放学，一年级一班正在放学"],
+        )
         self.assertEqual(engine.run_count, 1)
         self.assertEqual(checks, [0, 0])
 
