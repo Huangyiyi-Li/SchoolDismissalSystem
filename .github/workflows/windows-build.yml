@@ -56,10 +56,10 @@ jobs:
           "setup_name=$setupName" >> $env:GITHUB_OUTPUT
           "setup_sha_name=$setupShaName" >> $env:GITHUB_OUTPUT
 
-      - name: Run Python tests
+      - name: Run Windows client tests
         shell: pwsh
         run: |
-          python -m pytest -q
+          python -m pytest -q tests
 
       - name: Verify tag matches client version
         if: startsWith(github.ref, 'refs/tags/')
