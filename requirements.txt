@@ -4,3 +4,4 @@ requests
 paho-mqtt
 Pillow
 pytest
+qrcode
