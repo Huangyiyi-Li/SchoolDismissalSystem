@@ -51,7 +51,9 @@ def probe(output_dir, count, interval):
 
                 started = time.monotonic()
                 with patch("src.services.broadcast_manager.pyttsx3.init", open_engine):
-                    TTSWorker(Config(count, interval))._play_text("一年级一班正在放学")
+                    # Hosted Windows has English voices; use a pronounceable
+                    # fixture so empty Chinese synthesis cannot pass by accident.
+                    TTSWorker(Config(count, interval))._play_text("Grade one, class one is leaving school")
                 evidence["elapsed_seconds"] = time.monotonic() - started
             except Exception as exc:
                 evidence["errors"].append(repr(exc))
@@ -87,6 +89,8 @@ if __name__ == "__main__":
     results = [baseline, natural, spaced]
     if any(result["errors"] for result in results):
         raise SystemExit(1)
+    if baseline["audio_seconds"] < 0.5:
+        raise SystemExit("Baseline contains no usable speech")
     for result in (natural, spaced):
         if result["audio_seconds"] < baseline["audio_seconds"] * 2.5:
             raise SystemExit("Real SAPI audio is shorter than three repeats")
