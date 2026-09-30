@@ -1,0 +1,43 @@
+name: Publish verified beta.22
+on:
+  push:
+    branches: [codex/windows-voice-repeat]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[publish-beta.22]')
+    runs-on: windows-2022
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify successful build
+        shell: pwsh
+        run: |
+          $build = gh run view 36664938298 --json conclusion,headSha | ConvertFrom-Json
+          if ($build.conclusion -ne 'success' -or $build.headSha -ne '2031357c5bd3fe749e543d9729ae086a3433b958') { throw 'Build identity or tests do not match' }
+          gh run download 36664938298 --name '数智家校放学系统-v2.1.0-beta.22-windows-x64' --dir verified
+          if ($LASTEXITCODE -ne 0) { throw 'Download failed' }
+          New-Item -ItemType Directory -Path release-files
+          foreach ($suffix in @('setup-x64.exe', 'windows-x64.zip')) {
+            $original = Get-Item "verified/数智家校放学系统-v2.1.0-beta.22-$suffix"
+            $hash = (Get-FileHash $original -Algorithm SHA256).Hash.ToLower()
+            $expected = ((Get-Content "$($original.FullName).sha256" -Raw).Trim() -split '\s+')[0]
+            if ($hash -ne $expected) { throw "Checksum mismatch: $suffix" }
+            $name = "school-dismissal-v2.1.0-beta.22-$suffix"
+            Copy-Item $original "release-files/$name"
+            "$hash  $name" | Set-Content "release-files/$name.sha256" -Encoding utf8
+          }
+      - name: Publish release from verified commit
+        shell: pwsh
+        run: |
+          gh release view v2.1.0-beta.22 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'beta.22 already exists; refusing to replace it' }
+          $notes = (Get-Content release-notes/v2.1.0-beta.22.md -Raw).Replace('{{COMMIT_SHA}}', '2031357c5bd3fe749e543d9729ae086a3433b958')
+          Set-Content release-files/notes.md $notes -Encoding utf8
+          gh release create v2.1.0-beta.22 --target 2031357c5bd3fe749e543d9729ae086a3433b958 --title 'v2.1.0-beta.22 Windows 重复播报修复' --prerelease --notes-file release-files/notes.md release-files/*.exe release-files/*.zip release-files/*.sha256
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed' }
