@@ -61,6 +61,9 @@ jobs:
         run: |
           python -m pytest -q tests
 
+      - name: Verify real Windows speech repeats
+        run: python tools/probe_windows_tts.py tts-evidence
+
       - name: Verify tag matches client version
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh

@@ -4,12 +4,20 @@ import datetime
 import time
 import queue
 import threading
+import sys
 
 from .voice_text import build_dismissal_voice_text
 from .broadcast_mode import get_effective_window_signature
 from .dismissal_window import get_active_window_signature, is_led_output_active
 from .log_records import DISPLAY_TIMESTAMP_FORMAT
 from .tts_settings import normalize_tts_settings, tts_settings_from_config
+
+
+def create_tts_engine(stop_event):
+    if sys.platform == "win32":
+        from .windows_tts import WindowsSapiEngine
+        return WindowsSapiEngine(stop_event)
+    return pyttsx3.init()
 
 
 def play_tts_message(
@@ -53,9 +61,10 @@ def play_tts_message(
 class TTSWorker(QObject):
     finished = pyqtSignal()
     
-    def __init__(self, config_manager=None):
+    def __init__(self, config_manager=None, operation_logger=None):
         super().__init__()
         self.config = config_manager
+        self.operation_logger = operation_logger
         self.queue = queue.Queue()
         self.retry_count = 3
         self.running = True
@@ -67,14 +76,20 @@ class TTSWorker(QObject):
     def _play_text(self, text):
         if self._stop_event.is_set():
             return
-        engine = pyttsx3.init()
+        settings = (
+            tts_settings_from_config(self.config)
+            if self.config is not None
+            else normalize_tts_settings(0, 3, 0)
+        )
+        detail = (f"遍数={settings.repeat_count}; 间隔={settings.interval_seconds}秒; "
+                  f"语速={settings.rate}; 平台={sys.platform}; "
+                  f"配置={getattr(self.config, 'config_path', '内存配置')}")
+        self._log_playback("语音开始", text, "info", detail)
+        started = time.monotonic()
+        engine = None
         try:
+            engine = create_tts_engine(self._stop_event)
             engine.setProperty("volume", 1.0)
-            settings = (
-                tts_settings_from_config(self.config)
-                if self.config is not None
-                else normalize_tts_settings(0, 3, 0)
-            )
             play_tts_message(
                 engine,
                 text,
@@ -83,8 +98,26 @@ class TTSWorker(QObject):
                 interval_seconds=settings.interval_seconds,
                 wait_fn=self._stop_event.wait,
             )
+            self._log_playback(
+                "语音取消" if self._stop_event.is_set() else "语音播放完成",
+                text, "info" if self._stop_event.is_set() else "success",
+                f"{detail}; 引擎={type(engine).__name__}; 耗时={time.monotonic() - started:.2f}秒",
+            )
+        except Exception as exc:
+            self._log_playback("语音失败", text, "fail", f"{detail}; 错误={exc}")
+            raise
         finally:
-            engine.stop()
+            if engine is not None:
+                engine.stop()
+
+    def _log_playback(self, action, text, result, detail):
+        print(f"[TTS] {action}: {detail}")
+        if self.operation_logger is not None:
+            try:
+                self.operation_logger.record(category="语音播报", action=action,
+                                             target=text, result=result, detail=detail)
+            except Exception as exc:
+                print(f"[TTS] Diagnostic log error: {exc}")
 
     def run(self):
         # Windows/PyQt6 thread compatibility fix for SAPI5
@@ -152,7 +185,7 @@ class BroadcastManager(QObject):
         
         # TTS Thread
         self.tts_thread = QThread()
-        self.tts_worker = TTSWorker(self.config)
+        self.tts_worker = TTSWorker(self.config, operation_logger=self.operation_logger)
         self.tts_worker.moveToThread(self.tts_thread)
         self.tts_thread.started.connect(self.tts_worker.run)
         self.tts_thread.start()

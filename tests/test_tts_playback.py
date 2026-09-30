@@ -46,6 +46,64 @@ class FakeConfig:
 
 
 class TtsPlaybackTests(unittest.TestCase):
+    def test_windows_worker_waits_for_native_speech_instead_of_pyttsx3_loop(self):
+        class Voice:
+            def __init__(self):
+                self.texts = []
+                self.waits = []
+                self.pending = [False, True, False, True, False, True]
+
+            def Speak(self, text, flags):
+                if text:
+                    self.texts.append((text, flags))
+
+            def WaitUntilDone(self, timeout):
+                self.waits.append(timeout)
+                return self.pending.pop(0)
+
+        voice = Voice()
+        client = types.ModuleType("win32com.client")
+        client.Dispatch = lambda name: voice
+        win32com = types.ModuleType("win32com")
+        win32com.client = client
+        worker = TTSWorker(FakeConfig({"tts_repeat_count": 3,
+                                      "tts_repeat_interval_seconds": 0.01}))
+        with patch.dict(sys.modules, {"win32com": win32com, "win32com.client": client}), \
+                patch("sys.platform", "win32"), \
+                patch("src.services.broadcast_manager.pyttsx3.init", create=True,
+                      side_effect=AssertionError("Windows still uses unreliable pyttsx3 loop")):
+            worker._play_text("一年级一班正在放学")
+        self.assertEqual([text for text, _flags in voice.texts], ["一年级一班正在放学"] * 3)
+        self.assertEqual(len(voice.waits), 6)
+        self.assertEqual(voice.pending, [])
+
+    def test_native_wait_cancels_active_speech_when_worker_stops(self):
+        import threading
+        from src.services.windows_tts import WindowsSapiEngine
+        stop_event = threading.Event()
+
+        class Voice:
+            def __init__(self):
+                self.calls = []
+
+            def Speak(self, text, flags):
+                self.calls.append((text, flags))
+
+            def WaitUntilDone(self, timeout):
+                stop_event.set()
+                return False
+
+        voice = Voice()
+        client = types.ModuleType("win32com.client")
+        client.Dispatch = lambda name: voice
+        win32com = types.ModuleType("win32com")
+        win32com.client = client
+        with patch.dict(sys.modules, {"win32com": win32com, "win32com.client": client}):
+            engine = WindowsSapiEngine(stop_event)
+            engine.say("一年级一班正在放学")
+            engine.runAndWait()
+        self.assertEqual(voice.calls, [("一年级一班正在放学", 17), ("", 3)])
+
     def test_invalid_and_out_of_range_settings_are_normalized(self):
         self.assertEqual(
             normalize_tts_settings("bad", "bad", "bad"),
@@ -102,7 +160,7 @@ class TtsPlaybackTests(unittest.TestCase):
         worker = TTSWorker(config)
 
         with patch(
-            "src.services.broadcast_manager.pyttsx3.init",
+            "src.services.broadcast_manager.create_tts_engine",
             return_value=engine,
             create=True,
         ), patch("src.services.broadcast_manager.play_tts_message") as play:

@@ -66,6 +66,8 @@ def run_pyinstaller():
             "--hidden-import=sqlite3",
             "--hidden-import=pyttsx3.drivers",
             "--hidden-import=pyttsx3.drivers.sapi5",
+            "--hidden-import=win32com.client",
+            "--hidden-import=pythoncom",
             "--hidden-import=requests",
             f"--icon={ICON_PATH}",
             f"--add-data={PROJECT_ROOT / 'src'};src",

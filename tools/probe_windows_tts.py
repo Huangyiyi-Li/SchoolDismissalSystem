@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PyQt6.QtCore import QCoreApplication, QThread
 import pyttsx3
-from src.services.broadcast_manager import TTSWorker
+from src.services.broadcast_manager import TTSWorker, create_tts_engine
 
 
 class Config:
@@ -27,7 +27,7 @@ def probe(output_dir, count, interval):
     name = f"repeat-{count}-interval-{interval}"
     output = output_dir / f"{name}.wav"
     evidence = {"count": count, "interval": interval, "events": [], "errors": []}
-    init = pyttsx3.init
+    init = create_tts_engine
 
     class PlaybackThread(QThread):
         def run(self):
@@ -35,30 +35,39 @@ def probe(output_dir, count, interval):
             pythoncom.CoInitialize()
             stream = None
             try:
-                def open_engine():
+                def open_engine(stop_event):
                     nonlocal stream
-                    import comtypes.client
+                    from win32com.client import Dispatch
                     print(f"{name}: engine init", flush=True)
-                    engine = init()
+                    engine = init(stop_event)
                     print(f"{name}: engine ready", flush=True)
-                    voice = engine.proxy._driver._tts
+                    voice = engine.voice
                     evidence["voice"] = voice.Voice.GetDescription()
-                    stream = comtypes.client.CreateObject("SAPI.SpFileStream")
+                    stream = Dispatch("SAPI.SpFileStream")
                     stream.Open(str(output.resolve()), 3)
                     voice.AudioOutputStream = stream
                     print(f"{name}: audio stream ready", flush=True)
-                    def record(event, **kwargs):
-                        entry = {"event": event, **{key: str(value) if isinstance(value, Exception) else value
-                                                    for key, value in kwargs.items()}}
+                    say = engine.say
+                    wait = engine.runAndWait
+
+                    def record(entry):
                         evidence["events"].append(entry)
                         print(json.dumps({"case": name, **entry}), flush=True)
 
-                    for event in ("started-utterance", "started-word", "finished-utterance", "error"):
-                        engine.connect(event, lambda event=event, **kwargs: record(event, **kwargs))
+                    def say_and_record(text):
+                        record({"event": "submitted", "text": text})
+                        say(text)
+
+                    def wait_and_record():
+                        wait()
+                        record({"event": "SAPI-completed"})
+
+                    engine.say = say_and_record
+                    engine.runAndWait = wait_and_record
                     return engine
 
                 started = time.monotonic()
-                with patch("src.services.broadcast_manager.pyttsx3.init", open_engine):
+                with patch("src.services.broadcast_manager.create_tts_engine", open_engine):
                     # Hosted Windows has English voices; use a pronounceable
                     # fixture so empty Chinese synthesis cannot pass by accident.
                     TTSWorker(Config(count, interval))._play_text("Grade one, class one is leaving school")
@@ -133,3 +142,5 @@ if __name__ == "__main__":
     for result in (natural, spaced):
         if result["audio_seconds"] < baseline["audio_seconds"] * 2.5:
             raise SystemExit("Real SAPI audio is shorter than three repeats")
+    if spaced["elapsed_seconds"] < 2:
+        raise SystemExit("Two configured one-second gaps were not observed")
