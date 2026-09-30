@@ -140,7 +140,11 @@ if __name__ == "__main__":
     if baseline["audio_seconds"] < 0.5:
         raise SystemExit("Baseline contains no usable speech")
     for result in (natural, spaced):
-        if result["audio_seconds"] < baseline["audio_seconds"] * 2.5:
+        # Joining phrases removes the end-of-utterance silence between repeats.
+        # For this fixed fixture, 3 natural repeats measure ~2.42x the single
+        # utterance, while separately spoken repeats measure ~3x. Require more
+        # than two utterances without incorrectly counting trimmed pauses.
+        if result["audio_seconds"] < baseline["audio_seconds"] * 2.2:
             raise SystemExit("Real SAPI audio is shorter than three repeats")
     if spaced["elapsed_seconds"] < 2:
         raise SystemExit("Two configured one-second gaps were not observed")
