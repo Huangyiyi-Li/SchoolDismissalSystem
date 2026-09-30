@@ -27,18 +27,16 @@ def play_tts_message(
         engine.setProperty("rate", settings.rate)
 
     if settings.interval_seconds == 0:
-        if wait_fn is None:
-            engine.say("，".join([text] * settings.repeat_count))
-            engine.runAndWait()
+        # Submit natural-repeat speech to SAPI as one utterance. Re-entering
+        # pyttsx3.runAndWait() repeatedly on the same Windows SAPI engine can
+        # result in only the first repeat being heard even though all calls
+        # were made successfully.
+        if wait_fn is not None and wait_fn(0):
             return
-        for index in range(settings.repeat_count):
-            if wait_fn(0):
-                return
-            suffix = "，" if index < settings.repeat_count - 1 else ""
-            engine.say(f"{text}{suffix}")
-            engine.runAndWait()
-            if wait_fn(0):
-                return
+        engine.say("，".join([text] * settings.repeat_count))
+        engine.runAndWait()
+        if wait_fn is not None:
+            wait_fn(0)
         return
 
     for index in range(settings.repeat_count):
