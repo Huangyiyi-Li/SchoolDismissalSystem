@@ -7,6 +7,7 @@ on:
       - master
       - codex/2.0-upgrade
       - codex/android-dismissal-remote-test
+      - codex/offline-tts
     tags:
       - "v*"
 
