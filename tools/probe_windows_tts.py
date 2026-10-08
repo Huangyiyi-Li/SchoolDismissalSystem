@@ -11,7 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PyQt6.QtCore import QCoreApplication, QThread
 import pyttsx3
-from src.services.broadcast_manager import TTSWorker, create_tts_engine
+from src.services.broadcast_manager import TTSWorker
+from src.services.windows_tts import WindowsSapiEngine
 
 
 class Config:
@@ -27,7 +28,7 @@ def probe(output_dir, count, interval):
     name = f"repeat-{count}-interval-{interval}"
     output = output_dir / f"{name}.wav"
     evidence = {"count": count, "interval": interval, "events": [], "errors": []}
-    init = create_tts_engine
+    init = WindowsSapiEngine
 
     class PlaybackThread(QThread):
         def run(self):
