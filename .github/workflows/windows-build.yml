@@ -113,9 +113,11 @@ jobs:
         shell: pwsh
         run: |
           Expand-Archive -LiteralPath "dist\${{ steps.app_info.outputs.zip_name }}" -DestinationPath "dist\packaged-test"
-          & "dist\packaged-test\数智家校放学系统.exe" --tts-self-test "dist\tts-packaged.wav"
+          $exe = (Resolve-Path "dist\packaged-test\数智家校放学系统.exe").Path
+          $output = Join-Path (Resolve-Path "dist").Path "tts-packaged.wav"
+          $process = Start-Process -FilePath $exe -ArgumentList "--tts-self-test `"$output`"" -WorkingDirectory (Get-Location).Path -Wait -PassThru
           if (Test-Path "dist\tts-packaged.error.txt") { Get-Content "dist\tts-packaged.error.txt" }
-          if ($LASTEXITCODE -ne 0) { throw "Packaged offline voice failed" }
+          if ($process.ExitCode -ne 0) { throw "Packaged offline voice failed: $($process.ExitCode)" }
           python -c "import wave; w=wave.open(r'dist\tts-packaged.wav'); assert w.getnframes()/w.getframerate()>0.5"
 
       - name: Build current-user Windows installer
