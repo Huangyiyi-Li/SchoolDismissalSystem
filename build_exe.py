@@ -62,7 +62,7 @@ def run_pyinstaller():
             f"--name={APP_NAME}",
             "--noconfirm",
             "--clean",
-            "--windowed",
+            "--console",
             "--onefile",
             "--hidden-import=sqlite3",
             "--hidden-import=pyttsx3.drivers",
