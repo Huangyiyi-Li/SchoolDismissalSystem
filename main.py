@@ -10,15 +10,20 @@ if "--tts-self-test" in sys.argv:
     from pathlib import Path
     from shutil import copyfile
     from threading import Event
-    from src.services.offline_tts import OfflineMandarinEngine
-
+    import traceback
     output = Path(sys.argv[sys.argv.index("--tts-self-test") + 1]).resolve()
-    engine = OfflineMandarinEngine(Event(), player=lambda wav, duration, stop: copyfile(wav, output))
+    engine = None
     try:
+        from src.services.offline_tts import OfflineMandarinEngine
+        engine = OfflineMandarinEngine(Event(), player=lambda wav, duration, stop: copyfile(wav, output))
         engine.say("一年级一班正在放学，请家长到校门口接孩子。")
         engine.runAndWait()
+    except Exception:
+        output.with_suffix(".error.txt").write_text(traceback.format_exc(), encoding="utf-8")
+        raise
     finally:
-        engine.stop()
+        if engine is not None:
+            engine.stop()
     raise SystemExit(0)
 
 from PyQt6.QtGui import QIcon

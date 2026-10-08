@@ -114,6 +114,7 @@ jobs:
         run: |
           Expand-Archive -LiteralPath "dist\${{ steps.app_info.outputs.zip_name }}" -DestinationPath "dist\packaged-test"
           & "dist\packaged-test\数智家校放学系统.exe" --tts-self-test "dist\tts-packaged.wav"
+          if (Test-Path "dist\tts-packaged.error.txt") { Get-Content "dist\tts-packaged.error.txt" }
           if ($LASTEXITCODE -ne 0) { throw "Packaged offline voice failed" }
           python -c "import wave; w=wave.open(r'dist\tts-packaged.wav'); assert w.getnframes()/w.getframerate()>0.5"
 
