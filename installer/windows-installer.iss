@@ -32,6 +32,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 [Files]
 Source: "..\dist\数智家校放学系统.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\led-bridge\*"; DestDir: "{app}\led-bridge"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\offline-tts\vits-melo-tts-zh_en\*"; DestDir: "{app}\offline-tts\vits-melo-tts-zh_en"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"

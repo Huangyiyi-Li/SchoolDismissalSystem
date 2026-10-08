@@ -6,6 +6,21 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(current_dir, 'src')
 sys.path.insert(0, src_dir)
 
+if "--tts-self-test" in sys.argv:
+    from pathlib import Path
+    from shutil import copyfile
+    from threading import Event
+    from src.services.offline_tts import OfflineMandarinEngine
+
+    output = Path(sys.argv[sys.argv.index("--tts-self-test") + 1]).resolve()
+    engine = OfflineMandarinEngine(Event(), player=lambda wav, duration, stop: copyfile(wav, output))
+    try:
+        engine.say("一年级一班正在放学，请家长到校门口接孩子。")
+        engine.runAndWait()
+    finally:
+        engine.stop()
+    raise SystemExit(0)
+
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from src.app_info import APP_NAME, APP_VERSION

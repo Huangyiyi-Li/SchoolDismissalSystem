@@ -61,8 +61,20 @@ jobs:
         run: |
           python -m pytest -q tests
 
-      - name: Verify real Windows speech repeats
-        run: python tools/probe_windows_tts.py tts-evidence
+      - name: Download offline Mandarin voice
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force offline-tts | Out-Null
+          $url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2"
+          Invoke-WebRequest $url -OutFile offline-tts\model.tar.bz2
+          tar -xjf offline-tts\model.tar.bz2 -C offline-tts
+          Remove-Item offline-tts\model.tar.bz2
+          foreach ($name in @("model.onnx", "lexicon.txt", "tokens.txt", "LICENSE")) {
+            if (!(Test-Path "offline-tts\vits-melo-tts-zh_en\$name")) { throw "Voice asset missing: $name" }
+          }
+
+      - name: Verify offline Mandarin synthesis
+        run: python tools/probe_offline_tts.py
 
       - name: Verify tag matches client version
         if: startsWith(github.ref, 'refs/tags/')
@@ -92,6 +104,13 @@ jobs:
             Copy-Item "$env:JAVA_HOME\LICENSE" "led-bridge\runtime\LICENSE"
           }
           python build_exe.py
+
+      - name: Verify packaged offline voice
+        shell: pwsh
+        run: |
+          & "dist\数智家校放学系统.exe" --tts-self-test "dist\tts-packaged.wav"
+          if ($LASTEXITCODE -ne 0) { throw "Packaged offline voice failed" }
+          python -c "import wave; w=wave.open(r'dist\tts-packaged.wav'); assert w.getnframes()/w.getframerate()>0.5"
 
       - name: Build current-user Windows installer
         shell: pwsh

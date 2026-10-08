@@ -46,36 +46,18 @@ class FakeConfig:
 
 
 class TtsPlaybackTests(unittest.TestCase):
-    def test_windows_worker_waits_for_native_speech_instead_of_pyttsx3_loop(self):
-        class Voice:
-            def __init__(self):
-                self.texts = []
-                self.waits = []
-                self.pending = [False, True, False, True, False, True]
-
-            def Speak(self, text, flags):
-                if text:
-                    self.texts.append((text, flags))
-
-            def WaitUntilDone(self, timeout):
-                self.waits.append(timeout)
-                return self.pending.pop(0)
-
-        voice = Voice()
-        client = types.ModuleType("win32com.client")
-        client.Dispatch = lambda name: voice
-        win32com = types.ModuleType("win32com")
-        win32com.client = client
+    def test_windows_worker_uses_offline_engine_without_sapi(self):
+        engine = FakeEngine()
         worker = TTSWorker(FakeConfig({"tts_repeat_count": 3,
                                       "tts_repeat_interval_seconds": 0.01}))
-        with patch.dict(sys.modules, {"win32com": win32com, "win32com.client": client}), \
-                patch("sys.platform", "win32"), \
+        with patch("sys.platform", "win32"), \
+                patch("src.services.offline_tts.OfflineMandarinEngine", return_value=engine) as offline, \
                 patch("src.services.broadcast_manager.pyttsx3.init", create=True,
-                      side_effect=AssertionError("Windows still uses unreliable pyttsx3 loop")):
+                      side_effect=AssertionError("Windows should not use system speech")):
             worker._play_text("一年级一班正在放学")
-        self.assertEqual([text for text, _flags in voice.texts], ["一年级一班正在放学"] * 3)
-        self.assertEqual(len(voice.waits), 6)
-        self.assertEqual(voice.pending, [])
+        offline.assert_called_once()
+        self.assertEqual(engine.texts, ["一年级一班正在放学"] * 3)
+        self.assertEqual(engine.run_count, 3)
 
     def test_native_wait_cancels_active_speech_when_worker_stops(self):
         import threading

@@ -18,6 +18,7 @@ LOGO_PATH = PROJECT_ROOT / "assets" / "branding" / "logo-vertical.png"
 ICON_PATH = BUILD_DIR / "branding" / "app.ico"
 ICON_SIZES = (16, 32, 48, 64, 128, 256)
 LED_BRIDGE_DIR = PROJECT_ROOT / "led-bridge"
+OFFLINE_TTS_DIR = PROJECT_ROOT / "offline-tts"
 LED_BRIDGE_REQUIRED_JARS = {
     "bx06-0.6.5-SNAPSHOT.jar",
     "bx06.message-0.6.5-SNAPSHOT.jar",
@@ -69,6 +70,7 @@ def run_pyinstaller():
             "--hidden-import=win32com.client",
             "--hidden-import=pythoncom",
             "--hidden-import=requests",
+            "--collect-all=sherpa_onnx",
             f"--icon={ICON_PATH}",
             f"--add-data={PROJECT_ROOT / 'src'};src",
             f"--add-data={PROJECT_ROOT / 'assets'};assets",
@@ -103,6 +105,9 @@ def create_release_files():
         raise FileNotFoundError(
             "Bundled Java runtime is missing: led-bridge/runtime/bin/java.exe"
         )
+    model_dir = OFFLINE_TTS_DIR / "vits-melo-tts-zh_en"
+    if not (model_dir / "model.onnx").is_file():
+        raise FileNotFoundError(f"Bundled Mandarin speech model is missing: {model_dir}")
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.write(exe_path, arcname=WINDOWS_EXE_NAME)
@@ -116,6 +121,9 @@ def create_release_files():
                     runtime_file,
                     arcname=f"led-bridge/runtime/{runtime_file.relative_to(runtime_dir)}",
                 )
+        for model_file in sorted(model_dir.rglob("*")):
+            if model_file.is_file():
+                archive.write(model_file, arcname=f"offline-tts/vits-melo-tts-zh_en/{model_file.relative_to(model_dir)}")
 
     digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
     sha256_path.write_text(f"{digest}  {WINDOWS_ZIP_NAME}\n", encoding="utf-8")

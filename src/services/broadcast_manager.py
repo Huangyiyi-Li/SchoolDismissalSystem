@@ -15,8 +15,8 @@ from .tts_settings import normalize_tts_settings, tts_settings_from_config
 
 def create_tts_engine(stop_event):
     if sys.platform == "win32":
-        from .windows_tts import WindowsSapiEngine
-        return WindowsSapiEngine(stop_event)
+        from .offline_tts import OfflineMandarinEngine
+        return OfflineMandarinEngine(stop_event)
     return pyttsx3.init()
 
 
@@ -35,10 +35,7 @@ def play_tts_message(
         engine.setProperty("rate", settings.rate)
 
     if settings.interval_seconds == 0:
-        # Submit natural-repeat speech to SAPI as one utterance. Re-entering
-        # pyttsx3.runAndWait() repeatedly on the same Windows SAPI engine can
-        # result in only the first repeat being heard even though all calls
-        # were made successfully.
+        # Generate one continuous recording with natural pauses between repeats.
         if wait_fn is not None and wait_fn(0):
             return
         engine.say("，".join([text] * settings.repeat_count))
@@ -120,13 +117,6 @@ class TTSWorker(QObject):
                 print(f"[TTS] Diagnostic log error: {exc}")
 
     def run(self):
-        # Windows/PyQt6 thread compatibility fix for SAPI5
-        try:
-            import pythoncom
-            pythoncom.CoInitialize()
-        except ImportError:
-            pass 
-
         while self.running:
             try:
                 if not self.queue.empty():
@@ -146,17 +136,9 @@ class TTSWorker(QObject):
                 print(f"[TTS] Playback Error: {e}")
                 self._stop_event.wait(1)
         
-        # Cleanup COM in the WORKER THREAD
-        try:
-            import pythoncom
-            pythoncom.CoUninitialize()
-        except:
-            pass
-
     def stop(self):
         self.running = False
         self._stop_event.set()
-        # Do NOT uninitialize COM here, as this runs in Main Thread!
 
 
 class BroadcastManager(QObject):
