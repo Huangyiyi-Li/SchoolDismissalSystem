@@ -7,3 +7,4 @@ Pillow
 pytest
 qrcode
 sherpa-onnx==1.13.8
+numpy

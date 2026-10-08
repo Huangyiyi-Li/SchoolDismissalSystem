@@ -6,6 +6,8 @@ import wave
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import numpy as np
+
 
 MODEL_DIRECTORY = "vits-melo-tts-zh_en"
 MODEL_FILE = "model.int8.onnx"
@@ -71,7 +73,8 @@ class OfflineMandarinEngine:
             return
         # sherpa-onnx returns normalized float samples. WAV uses the ordinary
         # Windows audio output path and never creates a SAPI/OneCore object.
-        pcm = (audio.samples.clip(-1, 1) * 32767 * self.volume).astype("<i2")
+        samples = np.asarray(audio.samples, dtype=np.float32)
+        pcm = (np.clip(samples, -1, 1) * 32767 * self.volume).astype("<i2")
         with wave.open(str(self._wav), "wb") as output:
             output.setnchannels(1)
             output.setsampwidth(2)
