@@ -65,13 +65,16 @@ jobs:
       - name: Download offline Mandarin voice
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force offline-tts | Out-Null
-          $url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2"
-          Invoke-WebRequest $url -OutFile offline-tts\model.tar.bz2
-          tar -xjf offline-tts\model.tar.bz2 -C offline-tts
-          Remove-Item offline-tts\model.tar.bz2
-          foreach ($name in @("model.onnx", "lexicon.txt", "tokens.txt", "LICENSE")) {
-            if (!(Test-Path "offline-tts\vits-melo-tts-zh_en\$name")) { throw "Voice asset missing: $name" }
+          $modelDir = "offline-tts\vits-melo-tts-zh_en"
+          New-Item -ItemType Directory -Force $modelDir | Out-Null
+          $base = "https://huggingface.co/csukuangfj/vits-melo-tts-zh_en/resolve/main"
+          foreach ($name in @("model.int8.onnx", "lexicon.txt", "tokens.txt", "date.fst", "number.fst", "LICENSE")) {
+            Invoke-WebRequest "$base/$name" -OutFile "$modelDir\$name"
+            if (!(Test-Path "$modelDir\$name")) { throw "Voice asset missing: $name" }
+          }
+          $actual = (Get-FileHash "$modelDir\model.int8.onnx" -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne "f085f5079e05f039b800aeb542f5253c26a303211b0c6465d0d9387977855a63") {
+            throw "Offline Mandarin voice checksum mismatch: $actual"
           }
 
       - name: Verify offline Mandarin synthesis

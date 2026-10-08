@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 
 
 MODEL_DIRECTORY = "vits-melo-tts-zh_en"
+MODEL_FILE = "model.int8.onnx"
 
 
 def model_path():
@@ -21,13 +22,13 @@ class OfflineMandarinEngine:
 
         self.stop_event = stop_event
         self.model_dir = Path(model_dir) if model_dir is not None else model_path()
-        for name in ("model.onnx", "lexicon.txt", "tokens.txt", "date.fst", "number.fst"):
+        for name in (MODEL_FILE, "lexicon.txt", "tokens.txt", "date.fst", "number.fst"):
             if not (self.model_dir / name).is_file():
                 raise FileNotFoundError(f"离线语音模型缺少 {name}: {self.model_dir}")
         config = sherpa_onnx.OfflineTtsConfig(
             model=sherpa_onnx.OfflineTtsModelConfig(
                 vits=sherpa_onnx.OfflineTtsVitsModelConfig(
-                    model=str(self.model_dir / "model.onnx"),
+                    model=str(self.model_dir / MODEL_FILE),
                     lexicon=str(self.model_dir / "lexicon.txt"),
                     tokens=str(self.model_dir / "tokens.txt"),
                 ),

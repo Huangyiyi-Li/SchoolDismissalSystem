@@ -28,7 +28,7 @@ class BuildExeLedTests(unittest.TestCase):
             model_root = root / "offline-tts"
             model = model_root / "vits-melo-tts-zh_en"
             model.mkdir(parents=True)
-            (model / "model.onnx").write_bytes(b"voice")
+            (model / "model.int8.onnx").write_bytes(b"voice")
             (bridge / "lib").mkdir(parents=True)
             (bridge / "runtime" / "bin").mkdir(parents=True)
             dist.mkdir()
@@ -50,7 +50,7 @@ class BuildExeLedTests(unittest.TestCase):
             self.assertIn("led-bridge/led-bridge.jar", names)
             self.assertIn("led-bridge/lib/bx06-0.6.5-SNAPSHOT.jar", names)
             self.assertIn("led-bridge/runtime/bin/java.exe", names)
-            self.assertIn("offline-tts/vits-melo-tts-zh_en/model.onnx", names)
+            self.assertIn("offline-tts/vits-melo-tts-zh_en/model.int8.onnx", names)
 
     def test_release_fails_when_bundled_java_runtime_is_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:

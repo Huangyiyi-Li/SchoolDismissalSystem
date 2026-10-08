@@ -106,7 +106,7 @@ def create_release_files():
             "Bundled Java runtime is missing: led-bridge/runtime/bin/java.exe"
         )
     model_dir = OFFLINE_TTS_DIR / "vits-melo-tts-zh_en"
-    if not (model_dir / "model.onnx").is_file():
+    if not (model_dir / "model.int8.onnx").is_file():
         raise FileNotFoundError(f"Bundled Mandarin speech model is missing: {model_dir}")
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
