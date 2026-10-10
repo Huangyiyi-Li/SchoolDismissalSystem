@@ -91,6 +91,21 @@ def test_manual_smaller_font_also_shrinks_grade_column(tmp_path):
     assert width(small) < width(large)*0.65
 
 
+def test_auto_font_can_use_more_than_sixty_percent_of_row_height(tmp_path):
+    classes = [dict(class_id=f'{grade}-{number}', class_type=1,
+                    grade_name=f'{grade}年级', class_show_name=f'{grade}.{number}班',
+                    source_order=grade * 10 + number)
+               for grade in range(1, 7) for number in range(1, 7)]
+    metrics = []
+    r.render_led_pages('学校名称\n放学系统', classes, {}, tmp_path,
+                       width=352, height=144, grades_per_page=6,
+                       title_position='top',
+                       status_labels={'未放学': '', '放学中': '放学中', '已放学': '已放学'},
+                       metrics=metrics)
+    assert metrics[0]['cell_px'] > 10
+    assert metrics[0]['header_px'] == metrics[0]['cell_px']
+
+
 def test_dense_long_named_class_reduces_entire_table_font_consistently(tmp_path):
     items=catalog()
     items.append(dict(class_id='named',class_type=1,grade_name='一年级',class_show_name='向日葵实验班',source_order=99))

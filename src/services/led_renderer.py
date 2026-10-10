@@ -403,7 +403,9 @@ def _fit_admin_region(draw, rows, headers, width, height, header_size=0, cell_si
     upper bounds, and the grade column follows measured text plus proportional padding.
     """
     row_height = max(1, height // (len(rows) + 1))
-    automatic = max(1, int(row_height * 0.60))
+    # Try the full row height; actual glyph bounds and column width decide
+    # what fits without touching the grid lines.
+    automatic = row_height
     supplied = [int(v) for v in (header_size, cell_size) if v]
     base = min(supplied) if supplied else automatic
     header_start = int(header_size or base)
