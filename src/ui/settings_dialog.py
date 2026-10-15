@@ -258,14 +258,29 @@ class SettingsDialog(QDialog):
         self.led_grades_per_page_edit = QLineEdit(
             str(self.config.get("led_grades_per_page", 2))
         )
-        self.led_grades_per_page_edit.setPlaceholderText("行政班每区显示 1-6 个年级")
-        led_form.addRow("行政班每区行数:", self.led_grades_per_page_edit)
+        self.led_grades_per_page_edit.setPlaceholderText("每组显示 1-6 个年级")
+        led_form.addRow("行政班每组年级数:", self.led_grades_per_page_edit)
 
         self.led_layout_regions_edit = QLineEdit(
             str(self.config.get("led_layout_regions", 1))
         )
         self.led_layout_regions_edit.setPlaceholderText("行政班横向分区数 1-6")
         led_form.addRow("行政班横向分区:", self.led_layout_regions_edit)
+
+        self.led_class_layout_combo = QComboBox()
+        for label, value in (("常规（保留原布局）", "standard"),
+                             ("A：按班号上下分区", "stacked"),
+                             ("C：按班号分段轮播", "carousel")):
+            self.led_class_layout_combo.addItem(label, value)
+        self.led_class_layout_combo.setCurrentIndex(self.led_class_layout_combo.findData(
+            self.config.get('led_class_layout', 'standard')))
+        led_form.addRow("行政班布局:", self.led_class_layout_combo)
+        self.led_classes_per_segment_edit = QLineEdit(str(self.config.get('led_classes_per_segment', 7)))
+        self.led_classes_per_segment_edit.setPlaceholderText("1-100，例如 7：1～7 班、8～14 班")
+        led_form.addRow("每段班级列数:", self.led_classes_per_segment_edit)
+        self.led_class_layout_hint = QLabel()
+        self.led_class_layout_hint.setWordWrap(True)
+        led_form.addRow("", self.led_class_layout_hint)
 
         grade_filter_widget = QWidget()
         grade_filter_layout = QVBoxLayout(grade_filter_widget)
@@ -555,6 +570,7 @@ class SettingsDialog(QDialog):
             self.led_height_edit,
             self.led_grades_per_page_edit,
             self.led_layout_regions_edit,
+            self.led_classes_per_segment_edit,
             self.led_club_rows_edit,
             self.led_club_groups_edit,
             self.led_title_edit,
@@ -565,6 +581,9 @@ class SettingsDialog(QDialog):
             else:
                 editor.textChanged.connect(self.mark_led_preview_stale)
         self.led_show_title_check.toggled.connect(self.mark_led_preview_stale)
+        self.led_class_layout_combo.currentIndexChanged.connect(self.update_class_layout_controls)
+        self.led_class_layout_combo.currentIndexChanged.connect(self.mark_led_preview_stale)
+        self.update_class_layout_controls()
         self.led_color_mode_combo.currentIndexChanged.connect(
             self.mark_led_preview_stale
         )
@@ -581,6 +600,19 @@ class SettingsDialog(QDialog):
         self.led_title_position_combo.currentIndexChanged.connect(self.mark_led_preview_stale)
         self.refresh_desktop_monitors()
         self.update_output_controls()
+
+    def update_class_layout_controls(self):
+        mode = self.led_class_layout_combo.currentData()
+        self.led_layout_regions_edit.setEnabled(mode == 'standard')
+        self.led_classes_per_segment_edit.setEnabled(mode != 'standard')
+        hints = {
+            'standard': '保留原布局。窄屏可选择 A 上下分区或 C 分段轮播。',
+            'stacked': '同一组年级按班号分段，上下同时显示；每段重复班号表头和年级。高度不足请改用 C。',
+            'carousel': '同一组年级按班号分段轮播，页脚显示页码和班号范围；停留时间使用翻页间隔。',
+        }
+        self.led_class_layout_hint.setText(hints.get(mode, ''))
+        self.led_grades_per_page_edit.setToolTip(
+            'A/C 模式表示一组显示几个年级；设为 6 可包含六个年级。自定义每页年级优先。')
 
     def refresh_desktop_monitors(self):
         from .desktop_display import monitor_key, monitor_pixels
@@ -731,6 +763,8 @@ class SettingsDialog(QDialog):
         self.config.set("led_page_seconds", led_values["page_seconds"])
         self.config.set("led_grades_per_page", led_values["grades_per_page"])
         self.config.set("led_layout_regions", led_values["regions_per_page"])
+        self.config.set("led_class_layout", led_values["class_layout"])
+        self.config.set("led_classes_per_segment", led_values["classes_per_segment"])
         self.config.set("led_grade_filter_mode", led_values["grade_filter_mode"])
         self.config.set("led_visible_grades", led_values["visible_grades"])
         self.config.set("led_grade_pages", led_values["grade_pages"])
@@ -905,6 +939,13 @@ class SettingsDialog(QDialog):
                 raise ValueError()
         except ValueError:
             return fail("行政班横向分区数必须是 1-6 的整数")
+        class_layout = self.led_class_layout_combo.currentData()
+        try:
+            classes_per_segment = int(self.led_classes_per_segment_edit.text().strip())
+            if not 1 <= classes_per_segment <= 100:
+                raise ValueError()
+        except ValueError:
+            return fail("每段班级列数必须是 1-100 的整数")
         try:
             club_rows_per_group = int(self.led_club_rows_edit.text().strip())
             if not 1 <= club_rows_per_group <= 6:
@@ -952,6 +993,8 @@ class SettingsDialog(QDialog):
             "page_seconds": page_seconds,
             "grades_per_page": grades_per_page,
             "regions_per_page": regions_per_page,
+            "class_layout": class_layout,
+            "classes_per_segment": classes_per_segment,
             "grade_filter_mode": grade_filter_mode,
             "visible_grades": visible_grades,
             "grade_pages": grade_pages,
@@ -1070,6 +1113,8 @@ class SettingsDialog(QDialog):
                     title_position=request_values["title_position"],
                     pixel_scale=pixel_scale,
                     grade_pages=request_values['grade_pages'],
+                    class_layout=request_values['class_layout'],
+                    classes_per_segment=request_values['classes_per_segment'],
                     status_labels=request_values['status_labels'],
                     status_colors=request_values['status_colors'],
                     table_scale_percent=request_values['table_scale_percent'],
@@ -1159,9 +1204,14 @@ class SettingsDialog(QDialog):
             )
         else:
             color_summary = '双色模拟' if values['color_mode'] == 'double' else '单色模拟'
+            if values['class_layout'] == 'standard':
+                admin_summary = f"行政班 {values['regions_per_page']} 区×{values['grades_per_page']} 行"
+            else:
+                mode_label = 'A 上下分区' if values['class_layout'] == 'stacked' else 'C 按班号轮播'
+                admin_summary = f"行政班 {mode_label} · 每段最多 {values['classes_per_segment']} 列"
             self.preview_status_label.setText(
                 f"{values['width']}×{values['height']} 像素 · "
-                f"行政班 {values['regions_per_page']} 区×{values['grades_per_page']} 行 · "
+                f"{admin_summary} · "
                 f"LED 年级 {grade_summary} · "
                 f"社团班 {values['club_groups_per_page']} 组×{values['club_rows_per_group']} 行 · "
                 f"文字大小 标题{values['title_scale_percent']}% / "
@@ -1347,6 +1397,8 @@ class SettingsDialog(QDialog):
                 grade_filter_mode=values["grade_filter_mode"],
                 visible_grades=values["visible_grades"],
                 grade_pages=values['grade_pages'],
+                class_layout=values['class_layout'],
+                classes_per_segment=values['classes_per_segment'],
                 title_position=values["title_position"],
                 status_labels=values['status_labels'],
                 status_colors=values['status_colors'],

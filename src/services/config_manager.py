@@ -32,6 +32,8 @@ class ConfigManager:
         "led_page_seconds": 5,
         "led_grades_per_page": 2,
         "led_layout_regions": 1,
+        "led_class_layout": "standard",
+        "led_classes_per_segment": 7,
         "led_grade_filter_mode": "all",
         "led_visible_grades": [],
         "led_grade_pages": [],
@@ -113,7 +115,8 @@ class ConfigManager:
 # Device settings are independent even when several screens share one plan.
 LED_DEVICE_KEYS = ('led_controller_ip', 'led_controller_port', 'led_width',
                    'led_height', 'led_color_mode', 'led_output_type', 'led_monitor',
-                   'led_grade_filter_mode', 'led_visible_grades', 'led_grade_pages')
+                   'led_grade_filter_mode', 'led_visible_grades', 'led_grade_pages',
+                   'led_class_layout', 'led_classes_per_segment')
 LED_PLAN_KEYS = tuple(key for key in ConfigManager.DEFAULT_CONFIG
                       if key.startswith('led_') and
                       (key not in LED_DEVICE_KEYS or key in ('led_grade_filter_mode', 'led_visible_grades'))
@@ -139,6 +142,18 @@ def validate_led_setup(screens, plans):
     from .led_dimensions import validate_led_dimensions
     ids, targets = set(), set()
     plan_ids = set()
+    def validate_class_segments(values):
+        if values['led_class_layout'] not in ('standard', 'stacked', 'carousel'):
+            raise ValueError('班级布局必须为常规、上下分区或按班号轮播')
+        try:
+            raw_limit = values['led_classes_per_segment']
+            if isinstance(raw_limit, bool) or not isinstance(raw_limit, (int, str)):
+                raise ValueError()
+            limit = int(raw_limit)
+            if not 1 <= limit <= 100:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise ValueError('每段班级列数必须为 1-100 的整数') from None
     for plan in plans:
         if not re.fullmatch(r'[A-Za-z0-9_-]+', str(plan.get('id', ''))) or plan['id'] in plan_ids:
             raise ValueError('显示方案标识无效或重复')
@@ -146,6 +161,7 @@ def validate_led_setup(screens, plans):
         if not str(plan.get('name', '')).strip():
             raise ValueError('请填写显示方案名称')
         values = {**ConfigManager.DEFAULT_CONFIG, **plan.get('settings', {})}
+        validate_class_segments(values)
         if values['led_title_position'] not in ('left', 'top'):
             raise ValueError('标题位置必须为左侧或顶部')
         if values['led_grade_filter_mode'] not in ('all', 'selected'):
@@ -188,6 +204,7 @@ def validate_led_setup(screens, plans):
         plan = next(plan for plan in plans if plan['id'] == screen['plan_id'])
         values = {**ConfigManager.DEFAULT_CONFIG, **plan.get('settings', {}),
                   **screen.get('settings', {})}
+        validate_class_segments(values)
         if values['led_grade_filter_mode'] == 'selected' and not values['led_visible_grades']:
             raise ValueError(f'{name}：至少选择一个显示年级')
         grade_pages = values['led_grade_pages']

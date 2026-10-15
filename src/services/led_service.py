@@ -673,6 +673,8 @@ class LedService:
         title_scale_percent=None,
         metrics=None,
         grade_pages=None,
+        class_layout=None,
+        classes_per_segment=None,
     ):
         width = int(width if width is not None else self.config.get("led_width", 1024))
         height = int(height if height is not None else self.config.get("led_height", 96))
@@ -795,6 +797,10 @@ class LedService:
                     title_scale_percent=active_title_scale,
                     metrics=metrics,
                     grade_pages=active_grade_pages,
+                    class_layout=(class_layout if class_layout is not None
+                                  else self.config.get('led_class_layout', 'standard')),
+                    classes_per_segment=(classes_per_segment if classes_per_segment is not None
+                                         else self.config.get('led_classes_per_segment', 7)),
                 )
             pages.extend(rendered)
         return pages
@@ -825,6 +831,8 @@ class LedService:
         title_scale_percent=None,
         metrics=None,
         grade_pages=None,
+        class_layout=None,
+        classes_per_segment=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -872,6 +880,8 @@ class LedService:
                 title_scale_percent=title_scale_percent,
                 metrics=metrics,
                 grade_pages=grade_pages,
+                class_layout=class_layout,
+                classes_per_segment=classes_per_segment,
             )
 
     def test_connection(self, ip=None, port=None):
@@ -1004,6 +1014,8 @@ class LedService:
         table_scale_percent=None,
         title_scale_percent=None,
         grade_pages=None,
+        class_layout=None,
+        classes_per_segment=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -1096,6 +1108,8 @@ class LedService:
                 table_scale_percent=table_scale_percent,
                 title_scale_percent=title_scale_percent,
                 grade_pages=grade_pages,
+                class_layout=class_layout,
+                classes_per_segment=classes_per_segment,
             )
             result = self._start_display_session(
                 ip or self.config.get("led_controller_ip", "192.168.100.1"),

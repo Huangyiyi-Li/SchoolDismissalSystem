@@ -57,7 +57,9 @@ def render_desktop_frames(values, classes_by_type, statuses, size):
                 paths = render_led_pages(values['led_school_title'], classes, statuses, folder,
                                          grades_per_page=values['led_grades_per_page'],
                                          regions_per_page=values['led_layout_regions'],
-                                         grade_pages=values.get('led_grade_pages', []), **common)
+                                         grade_pages=values.get('led_grade_pages', []),
+                                         class_layout=values.get('led_class_layout', 'standard'),
+                                         classes_per_segment=values.get('led_classes_per_segment', 7), **common)
             else:
                 paths = render_club_led_pages(values['led_school_title'], classes, statuses, folder,
                                               rows_per_group=values['led_club_rows_per_group'],

@@ -18,6 +18,7 @@ VALUE_KEYS = {
     'regions_per_page': 'led_layout_regions', 'grade_filter_mode': 'led_grade_filter_mode',
     'visible_grades': 'led_visible_grades', 'show_title': 'led_show_title',
     'grade_pages': 'led_grade_pages',
+    'class_layout': 'led_class_layout', 'classes_per_segment': 'led_classes_per_segment',
     'title': 'led_school_title', 'club_rows_per_group': 'led_club_rows_per_group',
     'club_groups_per_page': 'led_club_groups_per_page',
     'title_font_size': 'led_title_font_size', 'header_font_size': 'led_header_font_size',
@@ -32,6 +33,7 @@ TEXT_FIELDS = {
     'led_page_seconds': 'led_page_seconds_edit', 'led_grades_per_page': 'led_grades_per_page_edit',
     'led_layout_regions': 'led_layout_regions_edit', 'led_club_rows_per_group': 'led_club_rows_edit',
     'led_club_groups_per_page': 'led_club_groups_edit',
+    'led_classes_per_segment': 'led_classes_per_segment_edit',
 }
 
 
@@ -155,6 +157,8 @@ class LedScreenSettings(QWidget):
             self.dialog.led_monitor_combo.addItem('未连接 · ' + monitor, monitor)
         self.dialog.led_monitor_combo.setCurrentIndex(self.dialog.led_monitor_combo.findData(monitor))
         self.dialog.led_title_position_combo.setCurrentIndex(self.dialog.led_title_position_combo.findData(cfg.get('led_title_position')))
+        self.dialog.led_class_layout_combo.setCurrentIndex(self.dialog.led_class_layout_combo.findData(cfg.get('led_class_layout')))
+        self.dialog.update_class_layout_controls()
         self.dialog.led_color_mode_combo.setCurrentIndex(self.dialog.led_color_mode_combo.findData(cfg.get('led_color_mode')))
         self.dialog.led_all_grades_check.setChecked(cfg.get('led_grade_filter_mode') == 'all')
         for grade, checkbox in self.dialog.led_grade_checks.items():
@@ -174,7 +178,7 @@ class LedScreenSettings(QWidget):
             combo.setCurrentIndex(combo.findData(colors[state]))
         self.dialog.update_output_controls()
         peers = [s['name'] for s in self.screens if s['plan_id'] == plan['id']]
-        self.scope_hint.setText('标题、状态文案与字号共用于：' + '、'.join(peers) + '。年级筛选与每页年级、展示方式、显示器和颜色只影响当前屏；已放学延迟对全校生效。')
+        self.scope_hint.setText('标题、状态文案与字号共用于：' + '、'.join(peers) + '。年级筛选、每页年级、班级分段、展示方式、显示器和颜色只影响当前屏；已放学延迟对全校生效。')
         self.dialog._preview_pages = []
         self.dialog._preview_index = 0
         self.dialog._preview_source_pixmap = None

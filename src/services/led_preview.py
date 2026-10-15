@@ -67,6 +67,10 @@ def preview_readability_warning(metric, width, height):
     if not sizes or min(sizes) >= 8:
         return ''
     suggestions = []
+    if metric.get('segment_count', 1) > 1:
+        suggestions.append('将上下分区改为 C 按班号分段轮播')
+    elif metric.get('kind') == 'admin' and metric.get('column_count', 0) >= 4:
+        suggestions.append('减少每段班级列数或使用 C 按班号分段轮播')
     if metric.get('row_count', 0) > 2:
         suggestions.append('把年级拆到更多轮播页')
     if metric.get('column_count', 0) >= 4 and metric.get('max_status_chars', 0) > 1:

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import os
 import re
@@ -48,6 +48,8 @@ class GradeRow:
 @dataclass(frozen=True)
 class LedPage:
     regions: list
+    region_headers: list = field(default_factory=list)
+    stacked: bool = False
 
     @property
     def rows(self):
@@ -108,7 +110,30 @@ def build_led_page_layout(
     regions_per_page=1,
     class_type=1,
     grade_pages=None,
+    class_layout="standard",
+    classes_per_segment=7,
 ):
+    if class_layout not in ('standard', 'stacked', 'carousel'):
+        raise ValueError('班级布局无效')
+    if not 1 <= int(classes_per_segment) <= 100:
+        raise ValueError('每段班级列数必须为 1-100')
+    if class_layout != 'standard' and int(class_type or 1) == 1:
+        # First choose grade pages, then partition actual class headers. Never
+        # slice each grade by position: missing/nonconsecutive classes would shift.
+        base = build_led_page_layout(classes, grades_per_page, 1, class_type, grade_pages)
+        pages = []
+        for page in base.pages:
+            headers = _admin_headers(page.rows, class_type)
+            chunks = [headers[i:i + int(classes_per_segment)]
+                      for i in range(0, len(headers), int(classes_per_segment))]
+            regions = [[GradeRow(row.grade_name, [item for item in row.classes
+                                                if _class_header(item) in chunk])
+                        for row in page.rows] for chunk in chunks]
+            if class_layout == 'stacked':
+                pages.append(LedPage(regions, chunks, stacked=True))
+            else:
+                pages.extend(LedPage([rows], [chunk]) for rows, chunk in zip(regions, chunks))
+        return LedPageLayout(pages, max((len(h) for p in pages for h in p.region_headers), default=0))
     rows_per_region = max(1, int(grades_per_page))
     region_count = max(1, int(regions_per_page))
     rows = _build_rows(classes, class_type)
@@ -488,6 +513,8 @@ def render_led_pages(
     title_scale_percent=100,
     metrics=None,
     grade_pages=None,
+    class_layout="standard",
+    classes_per_segment=7,
 ):
     if show_title and title_position == "top":
         return _top_title_pages(render_led_pages, locals())
@@ -499,7 +526,12 @@ def render_led_pages(
         regions_per_page=region_count,
         class_type=class_type,
         grade_pages=grade_pages,
+        class_layout=class_layout,
+        classes_per_segment=classes_per_segment,
     )
+    for page in layout.pages:
+        if page.stacked and height // len(page.regions) < max(len(rows) + 1 for rows in page.regions):
+            raise ValueError('屏幕高度不足以容纳全部上下分区，请增大每段班级列数、减少每组年级数或改用 C 按班号分段轮播')
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -513,7 +545,6 @@ def render_led_pages(
     # allowing their fixed minimums to consume the entire content area.
     title_width = min(round(170 * pixel_scale), max(1, width // 7)) if show_title else 0
     content_width = width - title_width
-    region_width = content_width / region_count
     paths = []
 
     color_mode = normalize_color_mode(color_mode)
@@ -540,11 +571,25 @@ def render_led_pages(
                 scale_percent=(None if title_font_size else title_scale_percent),
             )
 
+        footer_height = (max(1, min(round(18 * pixel_scale), height // 6))
+                         if class_layout == 'carousel' and len(layout.pages) > 1 else 0)
+        table_height = height - footer_height
+        region_count = len(page.regions)
+        region_width = content_width if page.stacked else content_width / region_count
+        region_height = table_height / region_count if page.stacked else table_height
+        headers_by_region = page.region_headers or [_admin_headers(rows, class_type) for rows in page.regions]
+        page_label = ''
+        if footer_height:
+            headers = headers_by_region[0]
+            page_label = f'{page_index}/{len(layout.pages)} {headers[0]}-{headers[-1]}'
+            draw.line((title_width, table_height, width - 1, table_height), fill=layout_color)
+            _draw_centered(draw, (title_width, table_height, width, height), page_label,
+                           preferred=max(1, footer_height - 3), fill=layout_color)
         region_metrics = [
-            _fit_admin_region(draw, rows, _admin_headers(rows, class_type),
-                              int(region_width), height, header_font_size, cell_font_size,
+            _fit_admin_region(draw, rows, headers,
+                              int(region_width), int(region_height), header_font_size, cell_font_size,
                               shown_statuses, table_scale_percent)
-            for rows in page.regions if rows
+            for rows, headers in zip(page.regions, headers_by_region) if rows
         ]
         page_header_size = min((m[0] for m in region_metrics), default=1)
         page_cell_size = min((m[1] for m in region_metrics), default=1)
@@ -553,28 +598,34 @@ def render_led_pages(
                             'cell_px': page_cell_size,
                             'title_px': title_size if show_title else 0,
                             'row_count': max((len(rows) for rows in page.regions), default=0),
-                            'column_count': max((len(_admin_headers(rows, class_type))
-                                                 for rows in page.regions), default=0),
+                            'column_count': max(map(len, headers_by_region), default=0),
+                            'segment_count': region_count if page.stacked else 1,
+                            'page_label': page_label,
                             'max_status_chars': max(map(len, shown_statuses), default=0)})
         for region_index in range(region_count):
             rows = page.regions[region_index] if region_index < len(page.regions) else []
             actual_row_count = max(1, len(rows))
-            header_height = max(1, height // (actual_row_count + 1))
-            region_x1 = round(title_width + region_width * region_index)
-            region_x2 = round(title_width + region_width * (region_index + 1))
+            region_y1 = round(region_height * region_index) if page.stacked else 0
+            region_y2 = round(region_height * (region_index + 1)) if page.stacked else table_height
+            header_height = max(1, (region_y2 - region_y1) // (actual_row_count + 1))
+            region_x1 = title_width if page.stacked else round(title_width + region_width * region_index)
+            region_x2 = width if page.stacked else round(title_width + region_width * (region_index + 1))
             if region_index:
-                draw.line((region_x1, 0, region_x1, height), fill=layout_color)
+                if page.stacked:
+                    draw.line((region_x1, region_y1, region_x2, region_y1), fill=layout_color)
+                else:
+                    draw.line((region_x1, 0, region_x1, table_height), fill=layout_color)
             if not rows:
                 continue
-            headers = _admin_headers(rows, class_type)
+            headers = headers_by_region[region_index]
             header_preferred, cell_preferred, grade_width = _fit_admin_region(
-                draw, rows, headers, region_x2 - region_x1, height,
+                draw, rows, headers, region_x2 - region_x1, region_y2 - region_y1,
                 page_header_size, page_cell_size, shown_statuses,
             )
             data_x1 = region_x1 + grade_width
-            draw.line((data_x1, 0, data_x1, height), fill=layout_color)
+            draw.line((data_x1, region_y1, data_x1, region_y2), fill=layout_color)
             draw.line(
-                (region_x1, header_height, region_x2, header_height),
+                (region_x1, region_y1 + header_height, region_x2, region_y1 + header_height),
                 fill=layout_color,
             )
 
@@ -583,9 +634,9 @@ def render_led_pages(
             class_width = max(1, (region_x2 - data_x1) / region_columns)
             for column in range(1, region_columns):
                 x = round(data_x1 + class_width * column)
-                draw.line((x, 0, x, height), fill=layout_color)
+                draw.line((x, region_y1, x, region_y2), fill=layout_color)
             for row_index in range(1, actual_row_count):
-                y = header_height * (row_index + 1)
+                y = region_y1 + header_height * (row_index + 1)
                 draw.line((region_x1, y, region_x2, y), fill=layout_color)
 
             for column in range(region_columns):
@@ -593,16 +644,16 @@ def render_led_pages(
                 x2 = round(data_x1 + class_width * (column + 1))
                 header = headers[column]
                 _draw_centered(
-                    draw, (x1, 0, x2, header_height), header,
+                    draw, (x1, region_y1, x2, region_y1 + header_height), header,
                     preferred=header_preferred, fill=layout_color,
                 )
 
             for row_index, row in enumerate(rows):
-                y1 = header_height * (row_index + 1)
+                y1 = region_y1 + header_height * (row_index + 1)
                 y2 = (
-                    header_height * (row_index + 2)
+                    region_y1 + header_height * (row_index + 2)
                     if row_index < len(rows) - 1
-                    else height
+                    else region_y2
                 )
                 _draw_centered(
                     draw,
