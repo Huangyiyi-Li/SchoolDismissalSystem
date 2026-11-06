@@ -154,7 +154,7 @@ class SettingsPreviewTests(unittest.TestCase):
         self.assertEqual(kwargs['title_scale_percent'], 100)
         self.assertEqual(kwargs['table_scale_percent'], 100)
 
-    def test_all_grades_is_safe_default_and_disables_individual_choices(self):
+    def test_all_grades_is_safe_default_and_allows_direct_subset_selection(self):
         dialog, _service = self.make_dialog()
 
         self.assertTrue(dialog.led_all_grades_check.isChecked())
@@ -163,8 +163,10 @@ class SettingsPreviewTests(unittest.TestCase):
             ["一年级", "二年级", "三年级"],
         )
         self.assertTrue(
-            all(not checkbox.isEnabled() for checkbox in dialog.led_grade_checks.values())
+            all(checkbox.isEnabled() and checkbox.isChecked() for checkbox in dialog.led_grade_checks.values())
         )
+        dialog.led_grade_checks['一年级'].click()
+        self.assertEqual(dialog._current_led_grade_filter(), ('selected', ['二年级', '三年级']))
 
     def test_selected_grades_are_saved_and_forwarded_to_preview(self):
         dialog, service = self.make_dialog()

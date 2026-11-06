@@ -2,8 +2,9 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QMessageBox, QFormLayout,
                              QCheckBox, QPlainTextEdit, QGroupBox, QWidget,
                              QScrollArea, QFrame, QComboBox, QSpinBox,
-                             QDoubleSpinBox, QGridLayout, QListWidget, QStackedWidget, QTabWidget, QSlider)
-from PyQt6.QtCore import Qt, pyqtSignal
+                             QDoubleSpinBox, QGridLayout, QListWidget, QStackedWidget, QTabWidget, QSlider,
+                             QSplitter, QSizePolicy)
+from PyQt6.QtCore import Qt, pyqtSignal, QSignalBlocker
 from PyQt6.QtGui import QPixmap
 from ..services.device_identity import format_device_no_from_node, normalize_device_no
 from ..services.led_dimensions import validate_led_dimensions
@@ -15,6 +16,8 @@ from ..services.led_preview import (
 )
 from ..services.tts_settings import tts_settings_from_config
 from ..utils.path_utils import get_app_root
+from .settings_components import Disclosure, ClassSelector, WrappingLabel, section, scroll_page, hint
+from .settings_theme import SETTINGS_STYLE
 import ipaddress
 import threading
 import uuid
@@ -41,12 +44,15 @@ class SettingsDialog(QDialog):
         self._led_action_running = False
         self._closing = False
         self.setWindowTitle("系统设置")
-        self.resize(1120, 720)
+        self.setObjectName('settingsDialog')
+        self.setStyleSheet(SETTINGS_STYLE)
+        self.resize(1280, 820)
+        self.setMinimumSize(1040, 700)
         self._preview_pages = []
         self._preview_index = 0
         self._preview_source_pixmap = None
         self._preview_zoom_percent = 100
-        self._preview_fit_to_window = False
+        self._preview_fit_to_window = True
         self._preview_color_mode = "single"
         self._led_validation_message = ""
         self._preview_state = PreviewRefreshState()
@@ -55,41 +61,72 @@ class SettingsDialog(QDialog):
         self.setup_ui()
         from .led_screen_settings import LedScreenSettings
         self.screen_panel = LedScreenSettings(self)
-        self.led_left_layout.insertWidget(0, self.screen_panel)
+        self.led_page_layout.insertWidget(0, self.screen_panel)
         self.led_global_reset_btn = QPushButton("重置全校今日放学状态")
         self.led_global_reset_btn.clicked.connect(self.reset_all_led_screens)
-        self.led_left_layout.addWidget(self.led_global_reset_btn)
+        self.led_global_reset_btn.setProperty('role', 'danger')
+        self.led_device_tools.addSpacing(12)
+        self.led_device_tools.addWidget(self.led_global_reset_btn)
+        self.screen_panel.name_edit.setParent(self.led_device_content)
+        self.led_connection_form.insertRow(0, '屏幕名称', self.screen_panel.name_edit)
+        self.led_shared_plan_layout.addWidget(self.screen_panel.plan_editor)
 
     def setup_ui(self):
         root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
         body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
         root.addLayout(body, 1)
+        sidebar = QWidget()
+        sidebar.setObjectName('settingsSidebar')
+        sidebar.setFixedWidth(150)
+        side = QVBoxLayout(sidebar)
+        side.setContentsMargins(0, 24, 0, 16)
+        app_title = QLabel('系统设置')
+        app_title.setObjectName('appTitle')
+        app_title.setContentsMargins(22, 0, 0, 16)
+        side.addWidget(app_title)
         self.navigation = QListWidget()
-        self.navigation.addItems(['学校绑定', '读卡设备', '语音播报', '屏幕展示', '高级设置'])
-        self.navigation.setFixedWidth(138)
-        self.navigation.setSpacing(6)
+        self.navigation.setObjectName('settingsNav')
+        self.navigation.addItems(['基础设置', '读卡设备', '屏幕展示'])
+        side.addWidget(self.navigation, 1)
+        brand = hint('数智家校放学系统')
+        brand.setContentsMargins(18, 0, 0, 0)
+        side.addWidget(brand)
         self.pages = QStackedWidget()
-        body.addWidget(self.navigation)
+        body.addWidget(sidebar)
         body.addWidget(self.pages, 1)
         page_layouts = []
-        for title in ['学校绑定', '读卡设备', '语音播报', '屏幕展示', '高级设置']:
+        descriptions = ['学校信息、播报习惯与连接参数', '配置刷卡器，并管理超高频标签绑定',
+                        '为每块屏幕选择班级、调整画面并检查连接']
+        for index, title in enumerate(['基础设置', '读卡设备', '屏幕展示']):
             page = QWidget()
             outer = QVBoxLayout(page)
+            outer.setContentsMargins(24, 20, 24, 18)
+            outer.setSpacing(14)
             heading = QLabel(title)
-            heading.setStyleSheet('font-size:20px;font-weight:600;margin-bottom:12px;')
+            heading.setObjectName('pageTitle')
             outer.addWidget(heading)
+            outer.addWidget(hint(descriptions[index]))
             content = QWidget()
             content_layout = QVBoxLayout(content)
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QFrame.Shape.NoFrame)
-            scroll.setWidget(content)
-            outer.addWidget(scroll)
+            content_layout.setContentsMargins(0, 0, 0, 0)
+            content_layout.setSpacing(16)
+            if index == 2:
+                outer.addWidget(content, 1)
+            else:
+                outer.addWidget(scroll_page(content), 1)
             self.pages.addWidget(page)
             page_layouts.append(content_layout)
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.navigation.setCurrentRow(0)
-        school_layout, reader_layout, voice_layout, led_page_layout, advanced_layout = page_layouts
+        school_layout, reader_layout, led_page_layout = page_layouts
+        voice_layout = school_layout
+        self.advanced_section = Disclosure('连接与高级选项')
+        self.advanced_section.setMaximumWidth(800)
+        advanced_layout = self.advanced_section.content_layout
         self.led_page_layout = led_page_layout
         from .reader_settings import ReaderSettings
         db = getattr(self.sync_service, 'db', None)
@@ -97,6 +134,8 @@ class SettingsDialog(QDialog):
         reader_layout.addWidget(self.reader_panel)
         self.finished.connect(lambda _: self.reader_panel.cleanup())
         layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(18)
         led_page_layout.addLayout(layout)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
@@ -130,20 +169,26 @@ class SettingsDialog(QDialog):
         advanced_form.addRow("MQTT:", self.mqtt_enabled_check)
         
         self.port_edit = self.reader_panel.near_port
-        school_layout.addLayout(form_layout)
+        school_group, school_group_layout = section('学校信息')
+        school_group.setMaximumWidth(800)
+        school_group_layout.addLayout(form_layout)
+        school_layout.addWidget(school_group)
         school_hint = QLabel('填写学校 ID 后保存，系统会同步班级和放学时段。更换学校会重新同步数据。')
         school_hint.setWordWrap(True)
-        school_layout.addWidget(school_hint)
+        school_group_layout.addWidget(school_hint)
         if self.sync_service:
             sync_btn = QPushButton('同步已保存学校的数据')
             sync_btn.clicked.connect(self.trigger_sync)
-            school_layout.addWidget(sync_btn)
-        school_layout.addStretch()
-        advanced_layout.addLayout(advanced_form)
-        advanced_layout.addStretch()
+            school_group_layout.addWidget(sync_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        advanced_group, advanced_group_layout = section('连接参数', '通常无需修改；更换接口地址会重新同步学校数据。')
+        advanced_group_layout.addLayout(advanced_form)
+        advanced_layout.addWidget(advanced_group)
 
         voice_group = QGroupBox("语音播报")
+        voice_group.setMaximumWidth(800)
         voice_form = QFormLayout(voice_group)
+        voice_form.setContentsMargins(18, 26, 18, 16)
+        voice_form.setVerticalSpacing(16)
 
         voice_settings = tts_settings_from_config(self.config)
         saved_tts_rate = voice_settings.rate
@@ -164,6 +209,7 @@ class SettingsDialog(QDialog):
         voice_form.addRow("播报语速:", rate_layout)
 
         self.tts_repeat_count_spin = QSpinBox()
+        self.tts_repeat_count_spin.setMaximumWidth(180)
         self.tts_repeat_count_spin.setRange(1, 10)
         self.tts_repeat_count_spin.setSuffix(" 遍")
         self.tts_repeat_count_spin.setValue(
@@ -172,6 +218,7 @@ class SettingsDialog(QDialog):
         voice_form.addRow("重复次数:", self.tts_repeat_count_spin)
 
         self.tts_repeat_interval_spin = QDoubleSpinBox()
+        self.tts_repeat_interval_spin.setMaximumWidth(180)
         self.tts_repeat_interval_spin.setRange(0, 10)
         self.tts_repeat_interval_spin.setDecimals(1)
         self.tts_repeat_interval_spin.setSingleStep(0.1)
@@ -190,6 +237,7 @@ class SettingsDialog(QDialog):
         voice_hint.setStyleSheet("color:#6b7280;font-size:12px;")
         voice_form.addRow("", voice_hint)
         voice_layout.addWidget(voice_group)
+        school_layout.addWidget(self.advanced_section)
         voice_layout.addStretch()
 
         led_group = QGroupBox("屏幕展示")
@@ -225,7 +273,7 @@ class SettingsDialog(QDialog):
         saved_color_index = self.led_color_mode_combo.findData(saved_color_mode)
         self.led_color_mode_combo.setCurrentIndex(max(0, saved_color_index))
         led_form.addRow("屏幕颜色:", self.led_color_mode_combo)
-        self.led_color_hint = QLabel()
+        self.led_color_hint = WrappingLabel()
         self.led_color_hint.setWordWrap(True)
         self.led_color_hint.setStyleSheet("color:#6b7280;font-size:12px;")
         led_form.addRow("", self.led_color_hint)
@@ -243,7 +291,7 @@ class SettingsDialog(QDialog):
         size_layout.addWidget(QLabel("×"))
         size_layout.addWidget(self.led_height_edit)
         led_form.addRow("像素尺寸:", size_layout)
-        self.led_size_hint = QLabel()
+        self.led_size_hint = WrappingLabel()
         self.led_size_hint.setWordWrap(True)
         self.led_size_hint.setStyleSheet("color:#6b7280;font-size:12px;")
         led_form.addRow("", self.led_size_hint)
@@ -282,24 +330,19 @@ class SettingsDialog(QDialog):
         self.led_class_layout_hint.setWordWrap(True)
         led_form.addRow("", self.led_class_layout_hint)
 
-        grade_filter_widget = QWidget()
-        grade_filter_layout = QVBoxLayout(grade_filter_widget)
-        grade_filter_layout.setContentsMargins(0, 0, 0, 0)
         self.led_all_grades_check = QCheckBox("显示全部年级")
-        grade_filter_layout.addWidget(self.led_all_grades_check)
-        grade_choices_widget = QWidget()
-        grade_choices_layout = QGridLayout(grade_choices_widget)
-        grade_choices_layout.setContentsMargins(0, 0, 0, 0)
         self.led_grade_checks = {}
         saved_mode = self.config.get("led_grade_filter_mode", "all")
         saved_grades = self._normalize_grade_names(
             self.config.get("led_visible_grades", [])
         )
+        saved_grades.extend(self.config.get('led_visible_classes_by_grade', {}))
         for plan in self.config.get("led_display_plans", []):
             saved_grades.extend(self._normalize_grade_names(plan.get("settings", {}).get("led_visible_grades", [])))
         for screen in self.config.get('led_screens', []):
             settings = screen.get('settings', {})
             saved_grades.extend(self._normalize_grade_names(settings.get('led_visible_grades', [])))
+            saved_grades.extend(settings.get('led_visible_classes_by_grade', {}))
             for page in settings.get('led_grade_pages', []):
                 saved_grades.extend(self._normalize_grade_names(page))
         available_grades = []
@@ -322,26 +365,14 @@ class SettingsDialog(QDialog):
             checkbox.setChecked(saved_mode == "selected" and grade_name in saved_grades)
             checkbox.toggled.connect(self.mark_led_preview_stale)
             self.led_grade_checks[grade_name] = checkbox
-            index = len(self.led_grade_checks) - 1
-            grade_choices_layout.addWidget(checkbox, index // 3, index % 3)
-        if not self.led_grade_checks:
-            no_grades_label = QLabel("暂无年级数据，请先同步学校数据")
-            no_grades_label.setStyleSheet("color:#9ca3af;")
-            grade_choices_layout.addWidget(no_grades_label, 0, 0, 1, 3)
-        grade_filter_layout.addWidget(grade_choices_widget)
-        self.led_grade_filter_hint = QLabel(
-            "仅影响行政班展示画面；未选择的年级仍会正常语音播报、记录日志并推送服务端。"
-        )
-        self.led_grade_filter_hint.setWordWrap(True)
-        self.led_grade_filter_hint.setStyleSheet("color:#6b7280;font-size:12px;")
-        grade_filter_layout.addWidget(self.led_grade_filter_hint)
         self.led_all_grades_check.setChecked(saved_mode != "selected")
         self.led_all_grades_check.toggled.connect(
             self._update_led_grade_filter_state
         )
         self.led_all_grades_check.toggled.connect(self.mark_led_preview_stale)
         self._update_led_grade_filter_state()
-        led_form.addRow("显示年级:", grade_filter_widget)
+        # Grade controls are reparented into the consolidated range selector below.
+        self._setup_led_class_filter(led_form)
         self.led_grade_pages_edit = QPlainTextEdit()
         self.led_grade_pages_edit.setMaximumHeight(92)
         self.led_grade_pages_edit.setPlaceholderText("留空自动分页；每行一页，例如：\n二年级、三年级\n四年级\n五年级\n六年级")
@@ -424,6 +455,7 @@ class SettingsDialog(QDialog):
         self._update_led_color_hint()
 
         led_test_layout = QVBoxLayout()
+        led_test_layout.setSpacing(8)
         self.led_connect_btn = QPushButton("测试连接")
         self.led_connect_btn.clicked.connect(self.test_led_connection)
         led_test_layout.addWidget(self.led_connect_btn)
@@ -437,17 +469,31 @@ class SettingsDialog(QDialog):
         # Keep controls in task-specific groups while retaining their existing signals.
         self.led_tabs = QTabWidget()
         led_forms = []
-        for title in ['设备', '内容', '样式']:
+        self.led_tab_contents = []
+        for title, description in [
+            ('显示范围', ''),
+            ('布局', '设置行政班和社团班的分页方式与停留时间。'),
+            ('样式', '调整标题、文字大小与三种放学状态的显示方式。'),
+            ('设备', '连接控制卡或选择电脑显示器，并检查实际输出。'),
+        ]:
             tab = QWidget()
             tab_layout = QVBoxLayout(tab)
+            tab_layout.setContentsMargins(2, 16, 10, 12)
+            tab_layout.setSpacing(16)
+            if description:
+                tab_layout.addWidget(hint(description))
             form = QFormLayout()
-            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+            form.setContentsMargins(0, 0, 0, 0)
+            form.setVerticalSpacing(16)
+            form.setHorizontalSpacing(18)
+            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
             form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
             tab_layout.addLayout(form)
             tab_layout.addStretch()
-            self.led_tabs.addTab(tab, title)
+            self.led_tabs.addTab(scroll_page(tab), title)
+            self.led_tab_contents.append(tab)
             led_forms.append(form)
-        group_index = 0
+        group_index = 3
         while led_form.rowCount():
             row = led_form.takeRow(0)
             label = row.labelItem.widget() if row.labelItem else None
@@ -455,41 +501,74 @@ class SettingsDialog(QDialog):
             if field is None:
                 field = row.fieldItem.layout()
             text = label.text() if isinstance(label, QLabel) else ''
+            if field is self.led_enabled_check:
+                if label:
+                    label.deleteLater()
+                continue
             if text == '翻页间隔(秒):':
                 group_index = 1
             elif text == '标题区域:':
                 group_index = 2
             elif text == '设备测试:':
-                group_index = 0
+                group_index = 3
+                self.led_device_tools = field
+            if field is self.class_selector:
+                led_forms[0].addRow(field)
+                continue
             if label:
                 led_forms[group_index].addRow(label, field)
             else:
                 led_forms[group_index].addRow(field)
-        self.led_connection_form = led_forms[0]
+        self.led_connection_form = led_forms[3]
+        self.led_device_content = self.led_tab_contents[3]
+        plan_section = Disclosure('共享显示方案')
+        self.led_shared_plan_layout = plan_section.content_layout
+        self.led_tab_contents[2].layout().insertWidget(0, plan_section)
         led_group.deleteLater()
-        left_layout.addWidget(self.led_tabs)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.addWidget(self.led_tabs, 1)
 
         # Buttons
-        btn_layout = QHBoxLayout()
+        footer = QFrame()
+        footer.setObjectName('settingsFooter')
+        btn_layout = QHBoxLayout(footer)
+        btn_layout.setContentsMargins(22, 12, 24, 12)
+        footer_hint = hint('预览只在本机生成；保存后应用所有设置。')
+        footer_hint.setWordWrap(False)
+        btn_layout.addWidget(footer_hint)
         
-        self.save_btn = QPushButton("保存")
+        self.save_btn = QPushButton("保存并应用")
+        self.save_btn.setProperty('role', 'primary')
         self.save_btn.clicked.connect(self.save_settings)
-        btn_layout.addWidget(self.save_btn)
         
         self.cancel_btn = QPushButton("取消")
         self.cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self.cancel_btn)
+        btn_layout.addWidget(self.save_btn)
         
-        btn_layout.insertStretch(0, 1)
-        root.addLayout(btn_layout)
-        left_scroll = QScrollArea()
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        left_scroll.setWidget(left_widget)
-        layout.addWidget(left_scroll, stretch=5)
+        btn_layout.insertStretch(1, 1)
+        root.addWidget(footer)
+        self.led_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.led_splitter.setChildrenCollapsible(False)
+        left_widget.setMinimumWidth(450)
+        self.led_splitter.addWidget(left_widget)
+        layout.addWidget(self.led_splitter, 1)
 
-        preview_group = QGroupBox("画面预览（仅本地预览，不影响实时状态）")
+        preview_group = QFrame()
+        preview_group.setObjectName('previewPanel')
         preview_layout = QVBoxLayout(preview_group)
+        preview_layout.setContentsMargins(16, 16, 16, 16)
+        preview_layout.setSpacing(8)
+        preview_heading = QHBoxLayout()
+        preview_title = QLabel('画面预览')
+        preview_title.setProperty('role', 'sectionTitle')
+        preview_heading.addWidget(preview_title)
+        preview_heading.addStretch()
+        self.preview_generate_btn = QPushButton("生成预览")
+        self.preview_generate_btn.clicked.connect(self.generate_led_preview)
+        preview_heading.addWidget(self.preview_generate_btn)
+        preview_layout.addLayout(preview_heading)
+        preview_layout.addWidget(hint('检查当前草稿，不向实体屏幕发送。'))
         self.preview_label = QLabel("点击“生成预览”查看当前参数效果")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.resize(560, 260)
@@ -499,14 +578,14 @@ class SettingsDialog(QDialog):
         self.preview_scroll = QScrollArea()
         self.preview_scroll.setWidgetResizable(False)
         self.preview_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_scroll.setMinimumSize(360, 260)
+        self.preview_scroll.setMinimumSize(270, 80)
         self.preview_scroll.setStyleSheet(
             "QScrollArea{background:#050000;border:1px solid #374151;}"
             "QScrollBar{background:#1f2937;}"
         )
         self.preview_scroll.setWidget(self.preview_label)
         preview_layout.addWidget(self.preview_scroll, stretch=1)
-        self.preview_status_label = QLabel("")
+        self.preview_status_label = WrappingLabel("")
         self.preview_status_label.setWordWrap(True)
         self.preview_status_label.setStyleSheet("color:#6b7280;")
         preview_layout.addWidget(self.preview_status_label)
@@ -519,9 +598,6 @@ class SettingsDialog(QDialog):
         preview_layout.addWidget(self.preview_readability_label)
 
         preview_controls = QHBoxLayout()
-        self.preview_generate_btn = QPushButton("生成预览")
-        self.preview_generate_btn.clicked.connect(self.generate_led_preview)
-        preview_controls.addWidget(self.preview_generate_btn)
         self.preview_prev_btn = QPushButton("上一页")
         self.preview_prev_btn.clicked.connect(self.show_previous_preview_page)
         preview_controls.addWidget(self.preview_prev_btn)
@@ -563,7 +639,10 @@ class SettingsDialog(QDialog):
         self.preview_sample_check.setChecked(True)
         self.preview_sample_check.toggled.connect(self.mark_led_preview_stale)
         preview_layout.addWidget(self.preview_sample_check)
-        layout.addWidget(preview_group, stretch=5)
+        preview_group.setMinimumWidth(330)
+        self.led_splitter.addWidget(preview_group)
+        self.led_splitter.setStretchFactor(0, 6)
+        self.led_splitter.setStretchFactor(1, 4)
 
         for editor in (
             self.led_width_edit,
@@ -608,7 +687,7 @@ class SettingsDialog(QDialog):
         hints = {
             'standard': '保留原布局。窄屏可选择 A 上下分区或 C 分段轮播。',
             'stacked': '同一组年级按班号分段，上下同时显示；每段重复班号表头和年级。高度不足请改用 C。',
-            'carousel': '同一组年级按班号分段轮播，页脚显示页码和班号范围；停留时间使用翻页间隔。',
+            'carousel': '同一组年级按班号分段轮播；停留时间使用翻页间隔，屏幕中只显示班级表格。',
         }
         self.led_class_layout_hint.setText(hints.get(mode, ''))
         self.led_grades_per_page_edit.setToolTip(
@@ -699,6 +778,8 @@ class SettingsDialog(QDialog):
         port_str = self.port_edit.text().strip()
 
         if not new_school_id:
+            self.navigation.setCurrentRow(0)
+            self.school_id_edit.setFocus()
             QMessageBox.warning(self, "错误", "学校 ID 不能为空")
             return
 
@@ -712,12 +793,12 @@ class SettingsDialog(QDialog):
 
         led_values = self._get_led_values()
         if led_values is None:
-            self.navigation.setCurrentRow(3)
+            self.navigation.setCurrentRow(2)
             return
 
         led_setup = self.screen_panel.values()
         if led_setup is None:
-            self.navigation.setCurrentRow(3)
+            self.navigation.setCurrentRow(2)
             return
 
         # Check if School ID changed
@@ -767,6 +848,7 @@ class SettingsDialog(QDialog):
         self.config.set("led_classes_per_segment", led_values["classes_per_segment"])
         self.config.set("led_grade_filter_mode", led_values["grade_filter_mode"])
         self.config.set("led_visible_grades", led_values["visible_grades"])
+        self.config.set("led_visible_classes_by_grade", led_values["visible_classes_by_grade"])
         self.config.set("led_grade_pages", led_values["grade_pages"])
         self.config.set("led_club_rows_per_group", led_values["club_rows_per_group"])
         self.config.set("led_club_groups_per_page", led_values["club_groups_per_page"])
@@ -868,9 +950,43 @@ class SettingsDialog(QDialog):
         return normalized
 
     def _update_led_grade_filter_state(self, *_args):
-        enabled = not self.led_all_grades_check.isChecked()
         for checkbox in self.led_grade_checks.values():
-            checkbox.setEnabled(enabled)
+            checkbox.setEnabled(True)
+            if self.led_all_grades_check.isChecked():
+                with QSignalBlocker(checkbox):
+                    checkbox.setChecked(True)
+        self._update_led_class_filter_state()
+
+    def _setup_led_class_filter(self, form):
+        catalog = (self.led_service.get_available_admin_classes(self.config.get('school_id'))
+                   if hasattr(self.led_service, 'get_available_admin_classes') else [])
+        # Keep saved IDs editable even if a later sync removed the class.
+        saved = dict(self.config.get('led_visible_classes_by_grade', {}))
+        for screen in self.config.get('led_screens', []):
+            for grade, ids in screen.get('settings', {}).get('led_visible_classes_by_grade', {}).items():
+                saved[grade] = list(dict.fromkeys(saved.get(grade, []) + ids))
+        for grade in self._normalize_grade_names([item.get('grade_name') for item in catalog] + list(saved)):
+            if grade not in self.led_grade_checks:
+                check = QCheckBox(grade)
+                check.setChecked(self.led_all_grades_check.isChecked())
+                check.toggled.connect(self.mark_led_preview_stale)
+                self.led_grade_checks[grade] = check
+        self.class_selector = ClassSelector(self, catalog, saved)
+        form.addRow(self.class_selector)
+        for check in self.led_grade_checks.values():
+            check.toggled.connect(self._update_led_class_filter_state)
+        self._update_led_class_filter_state()
+
+    def _load_led_class_filter(self, selections):
+        self.class_selector.load_selection(selections)
+
+    def _update_led_class_filter_state(self, *_args):
+        if hasattr(self, 'class_selector'):
+            self.class_selector.update_grade_state()
+
+    def _current_led_class_filter(self):
+        return {grade: [cid for cid, check in self.led_class_checks[grade].items() if check.isChecked()]
+                for grade, all_check in self.led_all_classes_checks.items() if not all_check.isChecked()}
 
     def _current_led_grade_filter(self):
         if self.led_all_grades_check.isChecked():
@@ -961,6 +1077,10 @@ class SettingsDialog(QDialog):
         if show_title and not title:
             return fail("显示标题时，标题内容不能为空")
         grade_filter_mode, visible_grades = self._current_led_grade_filter()
+        visible_classes_by_grade = self._current_led_class_filter()
+        for grade, ids in visible_classes_by_grade.items():
+            if not ids and (grade_filter_mode == 'all' or grade in visible_grades):
+                return fail(f'{grade}至少选择一个显示班级，或在左侧取消勾选该年级')
         if grade_filter_mode == "selected" and not visible_grades:
             return fail("指定 LED 显示年级时，至少选择一个年级")
         grade_pages = []
@@ -997,6 +1117,7 @@ class SettingsDialog(QDialog):
             "classes_per_segment": classes_per_segment,
             "grade_filter_mode": grade_filter_mode,
             "visible_grades": visible_grades,
+            "visible_classes_by_grade": visible_classes_by_grade,
             "grade_pages": grade_pages,
             "club_rows_per_group": club_rows_per_group,
             "club_groups_per_page": club_groups_per_page,
@@ -1053,7 +1174,7 @@ class SettingsDialog(QDialog):
             )
         else:
             self.preview_status_label.setText(
-                "参数已修改，请点击“生成预览”查看当前效果。"
+                "点击“生成预览”检查当前设置。"
             )
 
     def generate_led_preview(self):
@@ -1110,6 +1231,7 @@ class SettingsDialog(QDialog):
                     cell_font_size=(0 if request_values["output_type"] == "desktop" else request_values["cell_font_size"]),
                     grade_filter_mode=request_values["grade_filter_mode"],
                     visible_grades=request_values["visible_grades"],
+                    visible_classes_by_grade=request_values["visible_classes_by_grade"],
                     title_position=request_values["title_position"],
                     pixel_scale=pixel_scale,
                     grade_pages=request_values['grade_pages'],
@@ -1396,6 +1518,7 @@ class SettingsDialog(QDialog):
                 cell_font_size=values["cell_font_size"],
                 grade_filter_mode=values["grade_filter_mode"],
                 visible_grades=values["visible_grades"],
+                visible_classes_by_grade=values["visible_classes_by_grade"],
                 grade_pages=values['grade_pages'],
                 class_layout=values['class_layout'],
                 classes_per_segment=values['classes_per_segment'],

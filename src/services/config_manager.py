@@ -36,6 +36,7 @@ class ConfigManager:
         "led_classes_per_segment": 7,
         "led_grade_filter_mode": "all",
         "led_visible_grades": [],
+        "led_visible_classes_by_grade": {},
         "led_grade_pages": [],
         "led_club_rows_per_group": 4,
         "led_club_groups_per_page": 5,
@@ -116,6 +117,7 @@ class ConfigManager:
 LED_DEVICE_KEYS = ('led_controller_ip', 'led_controller_port', 'led_width',
                    'led_height', 'led_color_mode', 'led_output_type', 'led_monitor',
                    'led_grade_filter_mode', 'led_visible_grades', 'led_grade_pages',
+                   'led_visible_classes_by_grade',
                    'led_class_layout', 'led_classes_per_segment')
 LED_PLAN_KEYS = tuple(key for key in ConfigManager.DEFAULT_CONFIG
                       if key.startswith('led_') and
@@ -205,6 +207,14 @@ def validate_led_setup(screens, plans):
         values = {**ConfigManager.DEFAULT_CONFIG, **plan.get('settings', {}),
                   **screen.get('settings', {})}
         validate_class_segments(values)
+        selections = values['led_visible_classes_by_grade']
+        if not isinstance(selections, dict) or any(
+            not isinstance(grade, str) or not grade.strip() or
+            not isinstance(ids, list) or
+            any(not isinstance(cid, str) or not cid.strip() for cid in ids)
+            for grade, ids in selections.items()
+        ):
+            raise ValueError('显示班级必须按年级保存班级 ID 列表')
         if values['led_grade_filter_mode'] == 'selected' and not values['led_visible_grades']:
             raise ValueError(f'{name}：至少选择一个显示年级')
         grade_pages = values['led_grade_pages']

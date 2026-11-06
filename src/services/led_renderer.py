@@ -571,20 +571,15 @@ def render_led_pages(
                 scale_percent=(None if title_font_size else title_scale_percent),
             )
 
-        footer_height = (max(1, min(round(18 * pixel_scale), height // 6))
-                         if class_layout == 'carousel' and len(layout.pages) > 1 else 0)
-        table_height = height - footer_height
+        table_height = height
         region_count = len(page.regions)
         region_width = content_width if page.stacked else content_width / region_count
         region_height = table_height / region_count if page.stacked else table_height
         headers_by_region = page.region_headers or [_admin_headers(rows, class_type) for rows in page.regions]
         page_label = ''
-        if footer_height:
+        if class_layout == 'carousel' and len(layout.pages) > 1:
             headers = headers_by_region[0]
             page_label = f'{page_index}/{len(layout.pages)} {headers[0]}-{headers[-1]}'
-            draw.line((title_width, table_height, width - 1, table_height), fill=layout_color)
-            _draw_centered(draw, (title_width, table_height, width, height), page_label,
-                           preferred=max(1, footer_height - 3), fill=layout_color)
         region_metrics = [
             _fit_admin_region(draw, rows, headers,
                               int(region_width), int(region_height), header_font_size, cell_font_size,

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .led_bridge_client import BridgeResult, JavaLedBridge
 from .led_renderer import render_club_led_pages, render_led_pages
+from .led_class_filter import filter_admin_classes
 from ..utils.path_utils import get_app_root
 
 
@@ -98,48 +99,46 @@ class LedService:
                 grades.append(grade_name)
         return grades
 
+    def get_available_admin_classes(self, school_id=None):
+        return self.db.get_led_classes(school_id or self.config.get('school_id'), class_type=1)
+
     def _filter_classes_by_grades(
         self,
         classes_by_type,
         grade_filter_mode=None,
         visible_grades=None,
+        visible_classes_by_grade=None,
     ):
         mode = (
             grade_filter_mode
             if grade_filter_mode is not None
             else self.config.get("led_grade_filter_mode", "all")
         )
-        if mode != "selected":
-            return classes_by_type
         configured_grades = (
             visible_grades
             if visible_grades is not None
             else self.config.get("led_visible_grades", [])
         )
-        selected = set(self._normalize_visible_grades(configured_grades))
         filtered = dict(classes_by_type)
-        filtered[1] = [
-            item
-            for item in (classes_by_type.get(1) or [])
-            if str(item.get("grade_name") or "").strip() in selected
-        ]
+        filtered[1] = filter_admin_classes(
+            classes_by_type.get(1) or [], mode,
+            self._normalize_visible_grades(configured_grades),
+            visible_classes_by_grade if visible_classes_by_grade is not None
+            else self.config.get('led_visible_classes_by_grade', {}))
         return filtered
 
     def _class_status_affects_led(self, class_id, class_type):
         class_type = int(class_type or 1)
         if class_type != 1:
             return True
-        if self.config.get("led_grade_filter_mode", "all") != "selected":
+        if (self.config.get('led_grade_filter_mode', 'all') != 'selected'
+                and not self.config.get('led_visible_classes_by_grade', {})):
             return True
-        selected = set(
-            self._normalize_visible_grades(
-                self.config.get("led_visible_grades", [])
-            )
-        )
         class_id = str(class_id or "").strip()
-        for item in self.db.get_led_classes(self._school_id(), class_type=1):
+        for item in self._filter_classes_by_grades(
+                {1: self.db.get_led_classes(self._school_id(), class_type=1)})[1]:
             if str(item.get("class_id") or "").strip() == class_id:
-                return str(item.get("grade_name") or "").strip() in selected
+                return True
         return False
 
     def _active_statuses_locked(self):
@@ -675,6 +674,7 @@ class LedService:
         grade_pages=None,
         class_layout=None,
         classes_per_segment=None,
+        visible_classes_by_grade=None,
     ):
         width = int(width if width is not None else self.config.get("led_width", 1024))
         height = int(height if height is not None else self.config.get("led_height", 96))
@@ -740,6 +740,7 @@ class LedService:
             classes_by_type,
             grade_filter_mode=grade_filter_mode,
             visible_grades=visible_grades,
+            visible_classes_by_grade=visible_classes_by_grade,
         )
         active_grade_pages = (grade_pages if grade_pages is not None
                               else self.config.get('led_grade_pages', []))
@@ -833,6 +834,7 @@ class LedService:
         grade_pages=None,
         class_layout=None,
         classes_per_segment=None,
+        visible_classes_by_grade=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -872,6 +874,7 @@ class LedService:
                 cell_font_size=cell_font_size,
                 grade_filter_mode=grade_filter_mode,
                 visible_grades=visible_grades,
+                visible_classes_by_grade=visible_classes_by_grade,
                 title_position=title_position,
                 pixel_scale=pixel_scale,
                 status_labels=status_labels,
@@ -1016,6 +1019,7 @@ class LedService:
         grade_pages=None,
         class_layout=None,
         classes_per_segment=None,
+        visible_classes_by_grade=None,
     ):
         school_id = self.config.get("school_id")
         classes_by_type = {
@@ -1036,6 +1040,7 @@ class LedService:
             classes_by_type,
             grade_filter_mode=effective_filter_mode,
             visible_grades=effective_visible_grades,
+            visible_classes_by_grade=visible_classes_by_grade,
         )
         fallback_grades = []
         if (
@@ -1101,6 +1106,7 @@ class LedService:
                 cell_font_size=cell_font_size,
                 grade_filter_mode=grade_filter_mode,
                 visible_grades=visible_grades,
+                visible_classes_by_grade=visible_classes_by_grade,
                 title_position=title_position,
                 pixel_scale=pixel_scale,
                 status_labels=status_labels,

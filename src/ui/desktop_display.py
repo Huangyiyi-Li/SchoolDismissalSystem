@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QApplication, QWidget, QPushButton
 from ..services.config_manager import LedScreenConfig, load_led_setup
 from ..services.led_renderer import render_led_pages, render_club_led_pages
 from ..services.led_preview import colorize_led_preview
+from ..services.led_class_filter import filter_admin_classes
 
 
 def monitor_key(screen):
@@ -49,8 +50,9 @@ def render_desktop_frames(values, classes_by_type, statuses, size):
     frames = []
     with tempfile.TemporaryDirectory(prefix='school-desktop-') as folder:
         for kind, classes in sorted(classes_by_type.items()):
-            if kind == 1 and values['led_grade_filter_mode'] == 'selected':
-                classes = [c for c in classes if c.get('grade_name') in values['led_visible_grades']]
+            if kind == 1:
+                classes = filter_admin_classes(classes, values['led_grade_filter_mode'],
+                    values['led_visible_grades'], values.get('led_visible_classes_by_grade', {}))
             if not classes:
                 continue
             if kind == 1:

@@ -2,10 +2,10 @@
 from copy import deepcopy
 import ipaddress
 import uuid
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, QSize, Qt
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QListWidget, QLineEdit, QComboBox, QPushButton, QLabel,
-                             QMessageBox)
+                             QMessageBox, QListView)
 from ..services.config_manager import (load_led_setup, validate_led_setup,
                                        LED_DEVICE_KEYS, LED_PLAN_KEYS, LedScreenConfig)
 
@@ -17,6 +17,7 @@ VALUE_KEYS = {
     'page_seconds': 'led_page_seconds', 'grades_per_page': 'led_grades_per_page',
     'regions_per_page': 'led_layout_regions', 'grade_filter_mode': 'led_grade_filter_mode',
     'visible_grades': 'led_visible_grades', 'show_title': 'led_show_title',
+    'visible_classes_by_grade': 'led_visible_classes_by_grade',
     'grade_pages': 'led_grade_pages',
     'class_layout': 'led_class_layout', 'classes_per_segment': 'led_classes_per_segment',
     'title': 'led_school_title', 'club_rows_per_group': 'led_club_rows_per_group',
@@ -51,32 +52,47 @@ class LedScreenSettings(QWidget):
         self.index = 0
         self.loading = False
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 8)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self.toolbar = QHBoxLayout()
+        title = QLabel('屏幕')
+        self.toolbar.addWidget(title)
         self.screen_list = QListWidget()
-        self.screen_list.setMaximumHeight(105)
-        layout.addWidget(self.screen_list)
-        buttons = QHBoxLayout()
+        self.screen_list.setObjectName('screenList')
+        self.screen_list.setFlow(QListView.Flow.LeftToRight)
+        self.screen_list.setWrapping(False)
+        self.screen_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.screen_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.screen_list.setFixedHeight(68)
+        self.toolbar.addWidget(self.screen_list, 1)
+        self.toolbar.addWidget(dialog.led_enabled_check)
         self.add_button = QPushButton('添加屏幕')
-        self.remove_button = QPushButton('移除所选屏幕')
-        buttons.addWidget(self.add_button)
-        buttons.addWidget(self.remove_button)
-        buttons.addStretch()
-        layout.addLayout(buttons)
+        self.remove_button = QPushButton('移除')
+        self.remove_button.setToolTip('移除所选屏幕')
+        self.remove_button.setProperty('role', 'link')
+        self.toolbar.addWidget(self.add_button)
+        self.toolbar.addWidget(self.remove_button)
+        layout.addLayout(self.toolbar)
+        self.plan_editor = QWidget()
+        plan_layout = QVBoxLayout(self.plan_editor)
+        plan_layout.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
+        form.setVerticalSpacing(14)
         self.name_edit = QLineEdit()
-        form.addRow('屏幕名称', self.name_edit)
         self.plan_combo = QComboBox()
         form.addRow('显示方案', self.plan_combo)
         self.plan_name = QLineEdit()
         form.addRow('方案名称', self.plan_name)
-        layout.addLayout(form)
+        plan_layout.addLayout(form)
         self.detach_button = QPushButton('复制为独立方案')
-        layout.addWidget(self.detach_button)
+        plan_layout.addWidget(self.detach_button)
         self.scope_hint = QLabel()
         self.scope_hint.setWordWrap(True)
         self.scope_hint.setStyleSheet('color:#526273;font-size:12px;')
-        layout.addWidget(self.scope_hint)
+        plan_layout.addWidget(self.scope_hint)
         self.screen_list.currentRowChanged.connect(self.select_screen)
+        self.dialog.led_enabled_check.toggled.connect(self.update_summaries)
+        self.name_edit.textChanged.connect(self.update_summaries)
         self.plan_combo.currentIndexChanged.connect(self.select_plan)
         self.add_button.clicked.connect(self.add_screen)
         self.remove_button.clicked.connect(self.remove_screen)
@@ -91,7 +107,7 @@ class LedScreenSettings(QWidget):
         pid = self.screens[self.index]['plan_id']
         return next(plan for plan in self.plans if plan['id'] == pid)
 
-    def update_summaries(self):
+    def update_summaries(self, *_args):
         service = self.dialog.led_service
         statuses = service.screen_statuses() if hasattr(service, 'screen_statuses') else {}
         manager = getattr(service, 'desktop_display', None)
@@ -104,7 +120,13 @@ class LedScreenSettings(QWidget):
             status = statuses.get(screen['id'], '未应用')
             if not screen['enabled'] and '失败' not in status:
                 status = '未启用'
-            self.screen_list.item(i).setText(f"{screen['name']}  ·  {grades}  ·  {status}")
+            item = self.screen_list.item(i)
+            output = '电脑展示' if settings.get('led_output_type') == 'desktop' else 'LED'
+            enabled = self.dialog.led_enabled_check.isChecked() if i == self.index and not self.loading else screen['enabled']
+            name = self.name_edit.text().strip() if i == self.index and not self.loading else screen['name']
+            item.setText(f"{name}\n{output} · {'启用' if enabled else '停用'}")
+            item.setSizeHint(QSize(165, 46))
+            item.setToolTip(f"{name} · {grades}\n运行状态：{status}\n草稿设置在保存后应用")
 
     def reload_lists(self):
         self.loading = True
@@ -162,7 +184,12 @@ class LedScreenSettings(QWidget):
         self.dialog.led_color_mode_combo.setCurrentIndex(self.dialog.led_color_mode_combo.findData(cfg.get('led_color_mode')))
         self.dialog.led_all_grades_check.setChecked(cfg.get('led_grade_filter_mode') == 'all')
         for grade, checkbox in self.dialog.led_grade_checks.items():
-            checkbox.setChecked(grade in cfg.get('led_visible_grades'))
+            checkbox.setChecked(cfg.get('led_grade_filter_mode') == 'all' or grade in cfg.get('led_visible_grades'))
+        self.dialog._load_led_class_filter(cfg.get('led_visible_classes_by_grade'))
+        selected_grades = (cfg.get('led_visible_grades') if cfg.get('led_grade_filter_mode') == 'selected'
+                           else list(self.dialog.led_grade_checks))
+        if selected_grades:
+            self.dialog.class_selector.select_grade(selected_grades[0])
         self.dialog.led_grade_pages_edit.setPlainText('\n'.join(
             '、'.join(page) for page in cfg.get('led_grade_pages', [])))
         self.dialog.led_show_title_check.setChecked(cfg.get('led_show_title'))
@@ -178,7 +205,7 @@ class LedScreenSettings(QWidget):
             combo.setCurrentIndex(combo.findData(colors[state]))
         self.dialog.update_output_controls()
         peers = [s['name'] for s in self.screens if s['plan_id'] == plan['id']]
-        self.scope_hint.setText('标题、状态文案与字号共用于：' + '、'.join(peers) + '。年级筛选、每页年级、班级分段、展示方式、显示器和颜色只影响当前屏；已放学延迟对全校生效。')
+        self.scope_hint.setText('标题、状态文案与字号共用于：' + '、'.join(peers) + '。年级和班级筛选、每页年级、班级分段、展示方式、显示器和颜色只影响当前屏；已放学延迟对全校生效。')
         self.dialog._preview_pages = []
         self.dialog._preview_index = 0
         self.dialog._preview_source_pixmap = None
@@ -187,6 +214,7 @@ class LedScreenSettings(QWidget):
         self.dialog.preview_page_label.setText('0 / 0')
         self.dialog.mark_led_preview_stale()
         self.loading = False
+        self.update_summaries()
 
     def select_screen(self, index):
         if self.loading or index < 0 or index == self.index:

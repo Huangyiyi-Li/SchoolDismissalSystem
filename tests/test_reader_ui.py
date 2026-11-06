@@ -12,11 +12,11 @@ def test_settings_grouping_and_fixed_save():
             return ConfigManager.DEFAULT_CONFIG.get(key, default)
     dialog = SettingsDialog(Config())
     assert [dialog.navigation.item(i).text() for i in range(dialog.navigation.count())] == [
-        '学校绑定', '读卡设备', '语音播报', '屏幕展示', '高级设置']
+        '基础设置', '读卡设备', '屏幕展示']
     dialog.show(); app.processEvents()
     assert dialog.school_id_edit.isVisible()
     assert not dialog.preview_scroll.isVisible()
-    dialog.navigation.setCurrentRow(3); app.processEvents()
+    dialog.navigation.setCurrentRow(2); app.processEvents()
     assert dialog.preview_scroll.isVisible()
     assert dialog.save_btn.isVisible()
     dialog.reject()
@@ -28,7 +28,7 @@ def test_led_settings_do_not_need_horizontal_scrolling():
         def get(self, key, default=None):
             return ConfigManager.DEFAULT_CONFIG.get(key, default)
     dialog = SettingsDialog(Config()); dialog.show()
-    dialog.navigation.setCurrentRow(3); app.processEvents()
+    dialog.navigation.setCurrentRow(2); app.processEvents()
     assert all(s.horizontalScrollBar().maximum() == 0 for s in dialog.pages.currentWidget().findChildren(QScrollArea) if s is not dialog.preview_scroll)
     dialog.reject()
 

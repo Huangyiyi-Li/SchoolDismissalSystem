@@ -75,7 +75,7 @@ def test_real_bitmap_has_correct_headers_status_mapping_and_page_label(tmp_path,
     assert '8班' in [c.args[2] for c in draw.call_args_list]
     if mode=='carousel':
         assert metrics[1]['page_label']=='2/2 8班-14班'
-        assert any(c.args[2]=='2/2 8班-14班' for c in draw.call_args_list)
+        assert not any(c.args[2]=='2/2 8班-14班' for c in draw.call_args_list)
 
 
 @pytest.mark.parametrize('mode,limit', [('invalid',7), ('stacked',0), ('carousel',101),

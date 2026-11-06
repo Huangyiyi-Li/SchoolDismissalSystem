@@ -76,6 +76,9 @@ pip install -r requirements.txt
 * `led_layout_regions`: 行政班横向分区数，可设为 `1-6`，默认 `1`。
 * `led_class_layout`: 行政班布局，`standard` 为常规（默认）、`stacked` 为 A 上下分区、`carousel` 为 C 按班号轮播；A/C 不使用横向分区数。
 * `led_classes_per_segment`: A/C 每段实际班级列数，`1-100`，默认 `7`。A/C 的 `led_grades_per_page` 表示每组年级数，自定义每页年级优先。
+* `led_visible_classes_by_grade`: 每屏按年级保存指定班级 ID；没有配置的年级显示全部班级。在“屏幕展示 → 显示范围”勾选，预览、LED 与电脑展示同步生效。
+
+设置页合并为“基础设置、读卡设备、屏幕展示”三个入口。学校绑定和语音播报位于基础设置，连接参数可展开查看；各屏独立配置及功能对应关系详见[设置页说明](docs/settings-workspace.md)。
 * `led_club_rows_per_group`: 社团班每组显示的社团行数，可设为 `1-6`，默认 `4`。
 * `led_club_groups_per_page`: 社团班每页横向组数，可设为 `1-6`，默认 `5`。
 * `led_dismissed_delay_seconds`: “放学中”自动切换为“已放学”的间隔，默认 `5` 秒。
